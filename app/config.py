@@ -15,16 +15,18 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    openai_api_key: str = ""
-    pinecone_api_key: str = ""
-    cohere_api_key: str = ""
+    openai_api_key: str = Field(default="", validation_alias=AliasChoices("OPENAI_API_KEY", "openai_api_key"))
+    pinecone_api_key: str = Field(default="", validation_alias=AliasChoices("PINECONE_API_KEY", "pinecone_api_key"))
+    cohere_api_key: str = Field(default="", validation_alias=AliasChoices("COHERE_API_KEY", "cohere_api_key"))
+    
     pinecone_index: str = Field(
         default="medical-rag",
-        validation_alias=AliasChoices("PINECONE_INDEX", "PINECONE_INDEX_NAME"),
+        validation_alias=AliasChoices("PINECONE_INDEX", "PINECONE_INDEX_NAME", "pinecone_index"),
     )
-    embedding_model: str = "text-embedding-ada-002"
-    chat_model: str = "gpt-4o-mini"
-    reasoning_model: str = "gpt-4o"  # stronger model for CoT reasoning
+    
+    embedding_model: str = Field(default="text-embedding-ada-002", validation_alias=AliasChoices("EMBEDDING_MODEL", "embedding_model"))
+    chat_model: str = Field(default="gpt-4o-mini", validation_alias=AliasChoices("CHAT_MODEL", "chat_model"))
+    reasoning_model: str = Field(default="gpt-4o", validation_alias=AliasChoices("REASONING_MODEL", "reasoning_model"))
 
     # Feature flags
     enable_live_search: bool = True
@@ -36,7 +38,10 @@ class Settings(BaseSettings):
     scheduler_minute: int = 0
 
     # Database
-    db_path: str = str(PROJECT_ROOT / "data" / "medical_rag.db")
+    db_path: str = Field(
+        default=str(PROJECT_ROOT / "data" / "medical_rag.db"),
+        validation_alias=AliasChoices("DB_PATH", "db_path")
+    )
 
 
 settings = Settings()
