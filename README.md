@@ -1,5 +1,7 @@
 # Medical RAG
 
+**[Live Demo](https://web-production-6cb97.up.railway.app/)**
+
 Evidence-based biomedical Q&A powered by PubMed, Pinecone vector search, and chain-of-thought reasoning.
 
 Ask a question in plain English — the system decomposes it into a structured PubMed search strategy, retrieves and reranks evidence, then synthesises a cited answer with a transparent reasoning trace.

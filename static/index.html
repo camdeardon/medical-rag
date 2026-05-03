@@ -14,12 +14,14 @@
   <div class="page">
 
     <header class="header">
-      <div class="brand">
-        <svg class="logo-mark" width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-          <rect x="1" y="1" width="20" height="20" rx="6" stroke="currentColor" stroke-width="1.5"/>
-          <path d="M11 6v10M6 11h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-        </svg>
-        <span class="brand-name">Medical RAG</span>
+      <div class="header-left">
+        <div class="logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        </div>
+        <h1 class="logo-text">Medical RAG</h1>
+        <button id="restart-tour" class="help-btn" title="Restart Tutorial">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </button>
       </div>
       <div id="stats" class="stats" aria-live="polite"></div>
     </header>
@@ -216,6 +218,21 @@
       Knowledge base: <span id="schedule-time">03:00</span> daily refresh · v0.3.0
     </footer>
   </div>
+  <!-- User Tour Overlay -->
+  <div id="tour-overlay" class="tour-overlay"></div>
+  <div id="tour-highlight" class="tour-highlight hidden">
+    <div class="pulse-ring"></div>
+  </div>
+  <div id="tour-tooltip" class="tour-tooltip">
+    <div id="tour-step-counter" class="tour-step-counter">Step 1 of 5</div>
+    <div id="tour-title" class="tour-title">Welcome</div>
+    <div id="tour-content" class="tour-content">Content goes here.</div>
+    <div class="tour-actions">
+      <button id="tour-skip" class="tour-btn tour-btn-skip">Skip</button>
+      <button id="tour-next" class="tour-btn tour-btn-next">Next</button>
+    </div>
+  </div>
+
   <script src="/static/app.js"></script>
 </body>
 </html>

@@ -470,6 +470,121 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// ── User Tour (Pendo-like Guided Onboarding) ────────────────────────────────
+const Tour = {
+  currentStep: 0,
+  steps: [
+    {
+      title: "Welcome to Medical RAG",
+      content: "This platform helps you query medical literature using AI with full evidence backlinking. Let's show you around.",
+      target: null
+    },
+    {
+      title: "Chat with Evidence",
+      content: "Ask any medical question here. The AI will search the knowledge base and provide cited answers.",
+      target: "#panel-search .search-card",
+      panel: "search"
+    },
+    {
+      title: "Knowledge Hub",
+      content: "This is where you manage your data. You can discover new papers or set up automated tracking.",
+      target: '.tab-btn[data-tab="knowledge"]',
+      panel: "knowledge"
+    },
+    {
+      title: "Discover Literature",
+      content: "Search the global PubMed database for new topics to expand your local knowledge base.",
+      target: "#subpanel-discover .search-card",
+      panel: "knowledge",
+      subtab: "discover"
+    },
+    {
+      title: "Automated Collection",
+      content: "Turn your searches into subscriptions. We'll automatically collect new papers for you every day.",
+      target: '.sub-tab-btn[data-subtab="subscribe"]',
+      panel: "knowledge",
+      subtab: "subscribe"
+    }
+  ],
+
+  start() {
+    this.currentStep = 0;
+    $("tour-overlay").classList.add("active");
+    $("tour-tooltip").classList.add("active");
+    this.showStep();
+  },
+
+  showStep() {
+    const step = this.steps[this.currentStep];
+    
+    // Handle tab switching for specific steps
+    if (step.panel) switchTab(step.panel);
+    if (step.subtab) {
+        const subBtn = document.querySelector(`.sub-tab-btn[data-subtab="${step.subtab}"]`);
+        if (subBtn) subBtn.click();
+    }
+
+    $("tour-step-counter").textContent = `Step ${this.currentStep + 1} of ${this.steps.length}`;
+    $("tour-title").textContent = step.title;
+    $("tour-content").textContent = step.content;
+    $("tour-next").textContent = this.currentStep === this.steps.length - 1 ? "Finish" : "Next";
+
+    if (step.target) {
+      const el = document.querySelector(step.target);
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        const highlight = $("tour-highlight");
+        highlight.classList.remove("hidden");
+        highlight.style.top = `${rect.top + window.scrollY - 8}px`;
+        highlight.style.left = `${rect.left + window.scrollX - 8}px`;
+        highlight.style.width = `${rect.width + 16}px`;
+        highlight.style.height = `${rect.height + 16}px`;
+
+        const tooltip = $("tour-tooltip");
+        // Position tooltip below or above highlight
+        if (rect.bottom + 250 > window.innerHeight) {
+             tooltip.style.top = `${rect.top - 200}px`;
+        } else {
+             tooltip.style.top = `${rect.bottom + 24}px`;
+        }
+        tooltip.style.left = `${Math.max(20, Math.min(window.innerWidth - 340, rect.left))}px`;
+      }
+    } else {
+      $("tour-highlight").classList.add("hidden");
+      // Center tooltip if no target
+      const tooltip = $("tour-tooltip");
+      tooltip.style.top = "50%";
+      tooltip.style.left = "50%";
+      tooltip.style.transform = "translate(-50%, -50%)";
+    }
+  },
+
+  next() {
+    this.currentStep++;
+    if (this.currentStep < this.steps.length) {
+      this.showStep();
+    } else {
+      this.end();
+    }
+  },
+
+  end() {
+    $("tour-overlay").classList.remove("active");
+    $("tour-tooltip").classList.remove("active");
+    $("tour-highlight").classList.add("hidden");
+    localStorage.setItem("medical_rag_tour_completed", "true");
+  }
+};
+
+$("tour-next").addEventListener("click", () => Tour.next());
+$("tour-skip").addEventListener("click", () => Tour.end());
+$("restart-tour").addEventListener("click", () => Tour.start());
+
 loadStats();
 setInterval(loadStats, 30000);
 renderRecentSearches();
+
+// Auto-start tour for new users
+if (!localStorage.getItem("medical_rag_tour_completed")) {
+  setTimeout(() => Tour.start(), 1500);
+}
