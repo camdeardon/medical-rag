@@ -272,7 +272,7 @@ function renderDiscoveryResults(data) {
     <li class="source-card">
       <span class="source-num">${i + 1}</span>
       <div class="source-body">
-        <div class="title">${escapeHtml(a.title)}</div>
+        <a class="title" href="https://pubmed.ncbi.nlm.nih.gov/${a.pmid}/" target="_blank">${escapeHtml(a.title)}</a>
         <div class="source-meta">PMID ${a.pmid} · ${escapeHtml(a.journal)} · ${a.year}</div>
       </div>
     </li>
