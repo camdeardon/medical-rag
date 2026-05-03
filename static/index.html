@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Medical RAG</title>
+  <meta name="description" content="Evidence-based biomedical Q&A powered by PubMed, Pinecone vector search, and chain-of-thought reasoning." />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="page">
+
+    <header class="header">
+      <div class="brand">
+        <svg class="logo-mark" width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+          <rect x="1" y="1" width="20" height="20" rx="6" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M11 6v10M6 11h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <span class="brand-name">Medical RAG</span>
+      </div>
+      <div id="stats" class="stats" aria-live="polite"></div>
+    </header>
+
+    <!-- ── Tab Navigation ─────────────────────────────────── -->
+    <nav class="tab-nav" role="tablist">
+      <button class="tab-btn active" role="tab" aria-selected="true" data-tab="search" id="tab-search">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <circle cx="7" cy="7" r="5.25" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        Chat
+      </button>
+      <button class="tab-btn" role="tab" aria-selected="false" data-tab="knowledge" id="tab-knowledge">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M4 2v3M12 2v3M2 7h12M2 4.5A1.5 1.5 0 013.5 3h9A1.5 1.5 0 0114 4.5v8a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12.5v-8z" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Knowledge
+      </button>
+    </nav>
+
+    <main class="main">
+
+      <!-- ═══════════════════════════════════════════════════ -->
+      <!-- CHAT TAB (Default)                                  -->
+      <!-- ═══════════════════════════════════════════════════ -->
+      <div id="panel-search" class="tab-panel active">
+        <div class="hero">
+          <h1 class="hero-title">Chat with Evidence.</h1>
+          <p class="hero-sub">Ask questions based on the papers you've discovered.</p>
+        </div>
+
+        <div class="search-card">
+          <textarea id="q" rows="1" placeholder="What would you like to know?"></textarea>
+          <div class="search-bar">
+            <label class="k-label">
+              <span>Context</span>
+              <input type="number" id="k" min="1" max="20" value="6" />
+            </label>
+            <button type="button" id="btn" class="action-btn">
+              <span id="btn-text">Ask</span>
+              <svg id="btn-spinner" class="btn-spinner hidden" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2" stroke-dasharray="32" stroke-dashoffset="12" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div id="loading" class="loading hidden">
+          <svg class="spinner" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.75" stroke-dasharray="40" stroke-dashoffset="15" stroke-linecap="round"/></svg>
+          <span id="loading-phase">Analyzing...</span>
+        </div>
+
+        <div id="results" class="results hidden">
+          <section class="result-block">
+            <div class="answer-header">
+              <p class="block-label">Answer</p>
+              <span id="confidence-badge" class="confidence-badge hidden"></span>
+            </div>
+            <div id="answer" class="answer"></div>
+          </section>
+
+          <section id="reasoning-trace-section" class="result-block cot-section">
+            <details class="cot-details">
+              <summary class="cot-summary">
+                <span class="cot-icon">⚖️</span>
+                <span class="cot-title">Reasoning Trace</span>
+              </summary>
+              <div class="cot-content" id="reasoning-trace-content"></div>
+            </details>
+          </section>
+
+          <section class="result-block">
+            <p class="block-label">References</p>
+            <ul id="sources" class="sources"></ul>
+          </section>
+        </div>
+
+        <div id="err" class="error hidden"></div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════ -->
+      <!-- KNOWLEDGE TAB (Discovery & Subscription)            -->
+      <!-- ═══════════════════════════════════════════════════ -->
+      <div id="panel-knowledge" class="tab-panel">
+        
+        <nav class="sub-nav" role="tablist">
+          <button class="sub-tab-btn active" data-subtab="discover" role="tab" aria-selected="true">Discover</button>
+          <button class="sub-tab-btn" data-subtab="subscribe" role="tab" aria-selected="false">Subscribe</button>
+        </nav>
+
+        <!-- SUB-PANEL: DISCOVER -->
+        <div id="subpanel-discover" class="sub-tab-panel active">
+          <div class="hero">
+            <h1 class="hero-title">Discover Knowledge.</h1>
+            <p class="hero-sub">Identify relevant papers for your research topic using AI reasoning.</p>
+          </div>
+
+          <div class="search-card">
+            <textarea
+              id="discover-q"
+              rows="1"
+              placeholder="What research topic are you interested in?"
+              autocomplete="off"
+              spellcheck="true"
+            ></textarea>
+            <div class="search-bar">
+              <label class="k-label">
+                <span>Find</span>
+                <input type="number" id="discover-k" min="1" max="100" value="20" />
+              </label>
+              <button type="button" id="discover-btn" class="action-btn">
+                <span id="discover-btn-text">Discover</span>
+                <svg id="discover-spinner" class="btn-spinner hidden" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2" stroke-dasharray="32" stroke-dashoffset="12" stroke-linecap="round"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div id="discover-recent" class="discover-recent hidden" style="margin-top: 1.5rem;">
+            <p class="block-label">Recent Searches</p>
+            <div id="discover-recent-list" class="tag-list"></div>
+          </div>
+
+          <div id="discover-loading" class="loading hidden" aria-live="polite">
+            <svg class="spinner" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.75" stroke-dasharray="40" stroke-dashoffset="15" stroke-linecap="round"/>
+            </svg>
+            <span id="discover-loading-phase">Thinking...</span>
+          </div>
+
+          <div id="discover-results" class="results hidden">
+            <section id="discover-analysis-section" class="result-block cot-section">
+               <details class="cot-details" open>
+                 <summary class="cot-summary">
+                   <span class="cot-icon">🧠</span>
+                   <span class="cot-title">Query Reasoning</span>
+                 </summary>
+                 <div class="cot-content" id="discover-analysis-content"></div>
+               </details>
+            </section>
+
+            <section class="discovery-actions result-block">
+               <div class="action-header">
+                  <h3>Found <span id="discover-count">0</span> articles</h3>
+                  <button id="ingest-all-btn" class="action-btn" style="padding: 0.35rem 0.75rem; font-size: 0.75rem;">
+                     <svg width="12" height="12" viewBox="0 0 14 14" fill="none" style="margin-right:4px"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                     Save to Library
+                  </button>
+               </div>
+               <ul id="discover-list" class="sources discover-list"></ul>
+            </section>
+          </div>
+          <div id="discover-err" class="error hidden" role="alert"></div>
+        </div>
+
+        <!-- SUB-PANEL: SUBSCRIBE -->
+        <div id="subpanel-subscribe" class="sub-tab-panel">
+          <div class="hero">
+            <h1 class="hero-title">Automated Collection</h1>
+            <p class="hero-sub">Manage topics you are currently tracking for daily updates.</p>
+          </div>
+
+          <div id="ingest-status-section" class="ingest-status-section hidden">
+            <p class="block-label">Active Ingestion Tasks</p>
+            <div id="ingest-tasks-list" class="ingest-tasks-list"></div>
+          </div>
+
+          <div class="section-divider"><span>Subscriptions</span></div>
+
+          <div class="sub-form-card">
+            <div class="sub-form-row">
+              <input type="text" id="sub-query-input" class="sub-query-input" placeholder="Topic for daily tracking..." />
+            </div>
+            <div class="sub-form-bottom">
+              <label class="k-label">
+                <span>Max</span>
+                <input type="number" id="sub-max-results" min="10" max="1000" value="100" />
+              </label>
+              <button type="button" id="sub-add-btn" class="action-btn">Subscribe</button>
+            </div>
+          </div>
+
+          <div id="sub-list" class="sub-list">
+            <div id="sub-empty" class="sub-empty hidden"><p>No active subscriptions</p></div>
+          </div>
+          <div id="sub-err" class="error hidden"></div>
+        </div>
+
+      </div>
+
+    </main>
+
+    <footer class="footer">
+      Knowledge base: <span id="schedule-time">03:00</span> daily refresh · v0.3.0
+    </footer>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
