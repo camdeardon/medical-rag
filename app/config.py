@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     reasoning_model: str = Field(default="gpt-4o", validation_alias=AliasChoices("REASONING_MODEL", "reasoning_model"))
 
     # Feature flags
-    enable_live_search: bool = True
+    enable_live_search: bool = False
     enable_reranking: bool = True
     enable_reasoning_trace: bool = True
 

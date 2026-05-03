@@ -1,5 +1,118 @@
 const $ = (id) => document.getElementById(id);
 
+// ── Auth Logic ───────────────────────────────────────────────────────────────
+let _token = localStorage.getItem("medical_rag_token");
+let _user = null;
+let _isSignup = false;
+
+async function apiFetch(url, options = {}) {
+  const headers = {
+    ...options.headers,
+    "Authorization": `Bearer ${_token}`,
+  };
+  
+  if (options.body && !(options.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  const r = await fetch(url, { ...options, headers });
+  
+  if (r.status === 401) {
+    showAuth();
+    throw new Error("Unauthorized");
+  }
+  
+  return r;
+}
+
+function showAuth() {
+    $("auth-overlay").classList.add("active");
+    $("auth-email").focus();
+}
+
+function hideAuth() {
+    $("auth-overlay").classList.remove("active");
+}
+
+async function checkAuth() {
+    if (!_token) {
+        showAuth();
+        return;
+    }
+    try {
+        const r = await apiFetch("/api/auth/me");
+        if (r.ok) {
+            _user = await r.json();
+            renderUser();
+            hideAuth();
+        } else {
+            showAuth();
+        }
+    } catch {
+        showAuth();
+    }
+}
+
+function renderUser() {
+    if (_user) {
+        $("user-email").textContent = _user.email;
+        $("user-profile").classList.remove("hidden");
+    } else {
+        $("user-profile").classList.add("hidden");
+    }
+}
+
+async function handleAuth() {
+    const email = $("auth-email").value.trim();
+    const password = $("auth-password").value;
+    const btn = $("auth-submit-btn");
+    const err = $("auth-err");
+
+    if (!email || !password) return;
+
+    btn.disabled = true;
+    btn.textContent = _isSignup ? "Creating Account..." : "Signing In...";
+    err.classList.add("hidden");
+
+    const endpoint = _isSignup ? "/api/auth/signup" : "/api/auth/login";
+    try {
+        const r = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, password })
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || "Authentication failed");
+
+        _token = data.access_token;
+        localStorage.setItem("medical_rag_token", _token);
+        await checkAuth();
+    } catch (e) {
+        err.textContent = e.message;
+        err.classList.remove("hidden");
+    } finally {
+        btn.disabled = false;
+        btn.textContent = _isSignup ? "Sign Up" : "Login";
+    }
+}
+
+$("auth-toggle-btn")?.addEventListener("click", () => {
+    _isSignup = !_isSignup;
+    $("auth-title").textContent = _isSignup ? "Create Account" : "Welcome Back";
+    $("auth-sub").textContent = _isSignup ? "Join the research community." : "Sign in to manage your medical knowledge base.";
+    $("auth-submit-btn").textContent = _isSignup ? "Sign Up" : "Login";
+    $("auth-toggle-text").textContent = _isSignup ? "Already have an account?" : "Don't have an account?";
+    $("auth-toggle-btn").textContent = _isSignup ? "Login" : "Sign Up";
+});
+
+$("auth-submit-btn")?.addEventListener("click", handleAuth);
+$("logout-btn")?.addEventListener("click", () => {
+    _token = null;
+    _user = null;
+    localStorage.removeItem("medical_rag_token");
+    location.reload();
+});
+
 // ── UI Helpers ───────────────────────────────────────────────────────────────
 function autoResize(el) {
   el.style.height = "auto";
@@ -110,9 +223,8 @@ async function discover() {
   $("discover-err").classList.add("hidden");
 
   try {
-    const r = await fetch("/api/discover", {
+    const r = await apiFetch("/api/discover", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ topic: q, max_results: k }),
     });
     const data = await r.json();
@@ -177,9 +289,8 @@ async function ingestDiscovered() {
   btn.textContent = "Starting Ingestion...";
 
   try {
-    const r = await fetch("/api/ingest", {
+    const r = await apiFetch("/api/ingest", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pmids: _discoveredPmids }),
     });
     if (!r.ok) throw new Error("Failed to start ingestion");
@@ -210,9 +321,8 @@ async function ask() {
   $("err").classList.add("hidden");
 
   try {
-    const r = await fetch("/api/query", {
+    const r = await apiFetch("/api/query", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question: q, k }),
     });
     const data = await r.json();
@@ -241,7 +351,25 @@ function renderChatResults(data) {
     cb.style.color = style.color;
     cb.classList.remove("hidden");
 
+    const analysis = data.query_analysis;
+    let analysisHtml = "";
+    if (analysis) {
+      const intentType = analysis.intent_type || "GENERAL";
+      const intentColor = INTENT_COLOURS[intentType] || INTENT_COLOURS.GENERAL;
+      analysisHtml = `
+        <div class="cot-field">
+          <span class="cot-field-label">Search Strategy <span class="intent-badge" style="background:${intentColor}18; color:${intentColor}">${intentType}</span></span>
+          <p class="cot-field-value">${escapeHtml(analysis.query_strategy)}</p>
+        </div>
+        <div class="cot-field">
+          <span class="cot-field-label">Optimized PubMed Query</span>
+          <pre class="pubmed-query-code">${escapeHtml(analysis.pubmed_query)}</pre>
+        </div>
+      `;
+    }
+
     $("reasoning-trace-content").innerHTML = `
+      ${analysisHtml}
       <div class="cot-field">
         <span class="cot-field-label">Synthesis</span>
         <p class="cot-field-value">${escapeHtml(trace.synthesis)}</p>
@@ -270,7 +398,7 @@ function renderChatResults(data) {
 // ── Library / Subscriptions / Tasks ──────────────────────────────────────────
 async function loadIngestTasks() {
   try {
-    const r = await fetch("/api/ingest/tasks");
+    const r = await apiFetch("/api/ingest/tasks");
     const tasks = await r.json();
     const container = $("ingest-tasks-list");
     if (!container) return;
@@ -298,7 +426,7 @@ async function loadIngestTasks() {
 
 async function loadSubscriptions() {
   try {
-    const r = await fetch("/api/subscriptions");
+    const r = await apiFetch("/api/subscriptions");
     const subs = await r.json();
     const container = $("sub-list");
     const emptyState = $("sub-empty");
@@ -354,9 +482,8 @@ async function addSubscription() {
   btn.textContent = "Subscribing...";
 
   try {
-    const r = await fetch("/api/subscriptions", {
+    const r = await apiFetch("/api/subscriptions", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: q, max_results: max }),
     });
     if (r.ok) {
@@ -372,9 +499,8 @@ async function addSubscription() {
 
 async function toggleSub(id, active) {
   try {
-    await fetch(`/api/subscriptions/${id}`, {
+    await apiFetch(`/api/subscriptions/${id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ is_active: active }),
     });
     loadSubscriptions();
@@ -384,14 +510,14 @@ async function toggleSub(id, active) {
 async function deleteSub(id) {
   if (!confirm("Delete this subscription?")) return;
   try {
-    await fetch(`/api/subscriptions/${id}`, { method: "DELETE" });
+    await apiFetch(`/api/subscriptions/${id}`, { method: "DELETE" });
     loadSubscriptions();
   } catch (e) { console.error(e); }
 }
 
 async function runSub(id) {
   try {
-    const r = await fetch(`/api/subscriptions/${id}/run`, { method: "POST" });
+    const r = await apiFetch(`/api/subscriptions/${id}/run`, { method: "POST" });
     if (r.ok) {
        alert("Manual run started in background.");
        loadIngestTasks();
@@ -580,6 +706,7 @@ $("tour-next").addEventListener("click", () => Tour.next());
 $("tour-skip").addEventListener("click", () => Tour.end());
 $("restart-tour").addEventListener("click", () => Tour.start());
 
+checkAuth();
 loadStats();
 setInterval(loadStats, 30000);
 renderRecentSearches();

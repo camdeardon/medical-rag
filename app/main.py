@@ -21,9 +21,13 @@ from app.database import (
     get_subscription,
     toggle_subscription,
     delete_subscription,
+    create_user,
+    get_user_by_email,
+    get_user_by_id,
 )
 from app.rag import answer_question
 from app.scheduler import start_scheduler, stop_scheduler, run_subscription, run_all_subscriptions
+from app.auth import hash_password, verify_password, create_access_token, decode_access_token
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +63,21 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Request / Response models
 # ---------------------------------------------------------------------------
+
+class UserCreate(BaseModel):
+    email: str
+    password: str
+
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
 
 class QueryBody(BaseModel):
     question: str = Field(..., min_length=2, max_length=4000)
@@ -109,6 +128,61 @@ _ingest_tasks: dict[str, dict] = {}
 
 
 # ---------------------------------------------------------------------------
+# Auth Dependency
+# ---------------------------------------------------------------------------
+
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+security = HTTPBearer()
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = FastAPI.Depends(security)):
+    token = credentials.credentials
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(401, detail="Invalid or expired token")
+    
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(401, detail="Invalid token payload")
+    
+    user = get_user_by_id(int(user_id))
+    if not user:
+        raise HTTPException(401, detail="User not found")
+    return user
+
+
+# ---------------------------------------------------------------------------
+# Auth Endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/auth/signup", response_model=Token)
+def signup(body: UserCreate):
+    existing = get_user_by_email(body.email)
+    if existing:
+        raise HTTPException(400, detail="Email already registered")
+    
+    hashed = hash_password(body.password)
+    user = create_user(body.email, hashed)
+    
+    token = create_access_token({"sub": str(user["id"])})
+    return {"access_token": token, "token_type": "bearer"}
+
+
+@app.post("/api/auth/login", response_model=Token)
+def login(body: UserLogin):
+    user = get_user_by_email(body.email)
+    if not user or not verify_password(body.password, user["hashed_password"]):
+        raise HTTPException(401, detail="Incorrect email or password")
+    
+    token = create_access_token({"sub": str(user["id"])})
+    return {"access_token": token, "token_type": "bearer"}
+
+
+@app.get("/api/auth/me")
+def me(user: dict = FastAPI.Depends(get_current_user)):
+    return {"id": user["id"], "email": user["email"]}
+
+
+# ---------------------------------------------------------------------------
 # Existing endpoints
 # ---------------------------------------------------------------------------
 
@@ -135,13 +209,13 @@ def index_stats():
 
 
 @app.post("/api/query", response_model=QueryResponse)
-def query(body: QueryBody):
+def query(body: QueryBody, user: dict = FastAPI.Depends(get_current_user)):
     if not settings.openai_api_key:
         raise HTTPException(503, detail="OPENAI_API_KEY not configured")
     if not settings.pinecone_api_key:
         raise HTTPException(503, detail="PINECONE_API_KEY not configured")
     try:
-        result = answer_question(body.question.strip(), k=body.k)
+        result = answer_question(body.question.strip(), user_id=user["id"], k=body.k)
         return QueryResponse(**result)
     except Exception as e:
         raise HTTPException(500, detail=str(e)) from e
@@ -152,40 +226,40 @@ def query(body: QueryBody):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/subscriptions")
-def list_subscriptions():
+def list_subscriptions(user: dict = FastAPI.Depends(get_current_user)):
     """List all subscriptions."""
-    return get_subscriptions()
+    return get_subscriptions(user["id"])
 
 
 @app.post("/api/subscriptions", status_code=201)
-def create_subscription(body: SubscriptionCreate):
+def create_subscription(body: SubscriptionCreate, user: dict = FastAPI.Depends(get_current_user)):
     """Create a new subscription."""
-    sub = add_subscription(body.query.strip(), body.max_results)
+    sub = add_subscription(user["id"], body.query.strip(), body.max_results)
     return sub
 
 
 @app.patch("/api/subscriptions/{sub_id}")
-def patch_subscription(sub_id: int, body: SubscriptionToggle):
+def patch_subscription(sub_id: int, body: SubscriptionToggle, user: dict = FastAPI.Depends(get_current_user)):
     """Toggle a subscription's active state."""
-    sub = toggle_subscription(sub_id, body.is_active)
+    sub = toggle_subscription(user["id"], sub_id, body.is_active)
     if sub is None:
         raise HTTPException(404, detail="Subscription not found")
     return sub
 
 
 @app.delete("/api/subscriptions/{sub_id}")
-def remove_subscription(sub_id: int):
+def remove_subscription(sub_id: int, user: dict = FastAPI.Depends(get_current_user)):
     """Delete a subscription."""
-    ok = delete_subscription(sub_id)
+    ok = delete_subscription(user["id"], sub_id)
     if not ok:
         raise HTTPException(404, detail="Subscription not found")
     return {"deleted": True}
 
 
 @app.post("/api/subscriptions/{sub_id}/run")
-def trigger_subscription(sub_id: int):
+def trigger_subscription(sub_id: int, user: dict = FastAPI.Depends(get_current_user)):
     """Manually trigger a subscription run now (in a background thread)."""
-    sub = get_subscription(sub_id)
+    sub = get_subscription(user["id"], sub_id)
     if sub is None:
         raise HTTPException(404, detail="Subscription not found")
 
@@ -193,9 +267,9 @@ def trigger_subscription(sub_id: int):
     def _bg():
         try:
             count = run_subscription(sub)
-            log.info("Manual run of subscription #%d complete: %d new articles", sub_id, count)
+            log.info("Manual run of subscription #%d [user=%d] complete: %d new articles", sub_id, user["id"], count)
         except Exception:
-            log.exception("Manual run of subscription #%d failed", sub_id)
+            log.exception("Manual run of subscription #%d [user=%d] failed", sub_id, user["id"])
 
     thread = Thread(target=_bg, daemon=True, name=f"sub-run-{sub_id}")
     thread.start()
@@ -204,8 +278,9 @@ def trigger_subscription(sub_id: int):
 
 
 @app.post("/api/subscriptions/run-all")
-def trigger_all_subscriptions():
-    """Manually trigger all active subscriptions."""
+def trigger_all_subscriptions(user: dict = FastAPI.Depends(get_current_user)):
+    """Manually trigger all active subscriptions (admin/all-user functionality - potentially restricted)."""
+    # For now, let's just run all active ones across all users
     def _bg():
         try:
             results = run_all_subscriptions()
@@ -224,7 +299,7 @@ def trigger_all_subscriptions():
 # ---------------------------------------------------------------------------
 
 @app.post("/api/discover", response_model=DiscoverResponse)
-def discover_articles(body: DiscoverBody):
+def discover_articles(body: DiscoverBody, user: dict = FastAPI.Depends(get_current_user)):
     """
     Phase 1 & 2: User says what they want -> CoT reasoning -> PubMed discovery.
     """
@@ -262,7 +337,7 @@ def discover_articles(body: DiscoverBody):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/ingest")
-def trigger_ingest(body: IngestBody):
+def trigger_ingest(body: IngestBody, user: dict = FastAPI.Depends(get_current_user)):
     """Trigger a manual ingestion run from a query or specific PMIDs."""
     import uuid
     task_id = str(uuid.uuid4())
@@ -271,6 +346,7 @@ def trigger_ingest(body: IngestBody):
     
     _ingest_tasks[task_id] = {
         "id": task_id,
+        "user_id": user["id"],
         "query": label,
         "status": "running",
         "progress": "Starting ingestion...",
@@ -281,25 +357,25 @@ def trigger_ingest(body: IngestBody):
 
     def _bg_ingest():
         try:
-            log.info("Starting background ingestion for: %s", label)
+            log.info("Starting background ingestion for [user=%d]: %s", user["id"], label)
             from pubmed_ingest import ingest_pubmed_query, ingest_pmids
             
             def _cb(p):
                 _ingest_tasks[task_id]["progress"] = p
             
             if body.pmids:
-                count = ingest_pmids(body.pmids, progress_cb=_cb)
+                count = ingest_pmids(user["id"], body.pmids, progress_cb=_cb)
             elif body.query:
-                count = ingest_pubmed_query(body.query, body.max_results, progress_cb=_cb)
+                count = ingest_pubmed_query(user["id"], body.query, body.max_results, progress_cb=_cb)
             else:
                 raise ValueError("Either query or pmids must be provided")
             
-            log.info("Background ingestion complete: %d articles", count or 0)
+            log.info("Background ingestion complete [user=%d]: %d articles", user["id"], count or 0)
             _ingest_tasks[task_id]["status"] = "completed"
             _ingest_tasks[task_id]["progress"] = f"Finished. Ingested {count or 0} articles."
             _ingest_tasks[task_id]["count"] = count or 0
         except Exception as e:
-            log.exception("Ingest task failed for: %s", label)
+            log.exception("Ingest task failed for [user=%d]: %s", user["id"], label)
             _ingest_tasks[task_id]["status"] = "failed"
             _ingest_tasks[task_id]["error"] = str(e)
             _ingest_tasks[task_id]["progress"] = "Failed."
@@ -309,18 +385,18 @@ def trigger_ingest(body: IngestBody):
 
 
 @app.get("/api/ingest/status/{task_id}")
-def get_ingest_status(task_id: str):
+def get_ingest_status(task_id: str, user: dict = FastAPI.Depends(get_current_user)):
     """Get status of an ingestion task."""
     task = _ingest_tasks.get(task_id)
-    if not task:
+    if not task or task.get("user_id") != user["id"]:
         raise HTTPException(404, detail="Task not found")
     return task
 
 
 @app.get("/api/ingest/tasks")
-def list_ingest_tasks():
-    """List recent ingestion tasks."""
-    return list(_ingest_tasks.values())
+def list_ingest_tasks(user: dict = FastAPI.Depends(get_current_user)):
+    """List recent ingestion tasks for the user."""
+    return [t for t in _ingest_tasks.values() if t.get("user_id") == user["id"]]
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ import requests
 from app.config import settings, PROJECT_ROOT
 from app.database import (
     get_subscriptions,
+    get_all_active_subscriptions,
     get_seen_pmids,
     mark_pmids_seen,
     update_subscription_stats,
@@ -113,16 +114,16 @@ def run_subscription(sub: dict) -> int:
 
     if not all_pmids:
         log.info("No results for subscription #%d", sub_id)
-        update_subscription_stats(sub_id, 0)
+        update_subscription_stats(sub["user_id"], sub_id, 0)
         return 0
 
     # 2) Filter out already-seen PMIDs
-    seen = get_seen_pmids(sub_id)
+    seen = get_seen_pmids(sub["user_id"], sub_id)
     new_pmids = [p for p in all_pmids if p not in seen]
 
     if not new_pmids:
         log.info("Subscription #%d: all %d articles already seen", sub_id, len(all_pmids))
-        update_subscription_stats(sub_id, 0)
+        update_subscription_stats(sub["user_id"], sub_id, 0)
         return 0
 
     log.info(
@@ -139,22 +140,20 @@ def run_subscription(sub: dict) -> int:
 
     # 4) Ingest into Pinecone via the existing pipeline
     try:
-        _ingest_pmids(new_pmids)
+        _ingest_pmids(sub["user_id"], new_pmids)
     except Exception:
         log.exception("Ingestion failed for subscription #%d", sub_id)
-        # Still mark PMIDs as seen to avoid retrying endlessly
-        # (they may have partially ingested)
 
     # 5) Record PMIDs as seen
     pmid_title_pairs = [(p, titles.get(p, "")) for p in new_pmids]
-    mark_pmids_seen(sub_id, pmid_title_pairs)
-    update_subscription_stats(sub_id, len(new_pmids))
+    mark_pmids_seen(sub["user_id"], sub_id, pmid_title_pairs)
+    update_subscription_stats(sub["user_id"], sub_id, len(new_pmids))
 
     log.info("Subscription #%d: ingested %d new articles", sub_id, len(new_pmids))
     return len(new_pmids)
 
 
-def _ingest_pmids(pmids: list[str]) -> None:
+def _ingest_pmids(user_id: int, pmids: list[str]) -> None:
     """Ingest a list of PMIDs into Pinecone using the existing pipeline."""
     from dotenv import load_dotenv
     load_dotenv(PROJECT_ROOT / ".env")
@@ -192,16 +191,16 @@ def _ingest_pmids(pmids: list[str]) -> None:
         return
 
     embeddings = OpenAIEmbeddings(model=settings.embedding_model)
+    namespace = f"user_{user_id}"
     PineconeVectorStore.from_documents(
-        chunks, embeddings, index_name=settings.pinecone_index
+        chunks, embeddings, index_name=settings.pinecone_index, namespace=namespace
     )
     log.info("Ingested %d chunks from %d articles", len(chunks), len(docs))
 
 
 def run_all_subscriptions() -> dict[str, int]:
     """Run all active subscriptions. Returns {sub_id: new_count}."""
-    subs = get_subscriptions()
-    active = [s for s in subs if s.get("is_active")]
+    active = get_all_active_subscriptions()
 
     if not active:
         log.info("No active subscriptions to run")

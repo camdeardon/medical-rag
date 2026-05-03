@@ -70,6 +70,7 @@ def _doc_to_source(doc, max_excerpt: int = 400) -> SourceRef:
 
 def _retrieve_multi_strategy(
     reasoned_query: ReasonedQuery,
+    user_id: int | None = None,
     k: int = 6,
 ) -> list[Any]:
     """Retrieve from Pinecone (vector search) + live PubMed, then deduplicate."""
@@ -77,12 +78,15 @@ def _retrieve_multi_strategy(
     all_docs: list[Any] = []
     seen_pmids: set[str] = set()
 
+    # Use user_id as namespace for isolation
+    namespace = f"user_{user_id}" if user_id else None
+
     # 1) Vector search — use each embedding query
     queries = reasoned_query.embedding_queries or [reasoned_query.original_question]
     per_query_k = max(k, 4)
     for eq in queries[:3]:  # cap at 3 embedding queries
         try:
-            results = store.similarity_search(eq, k=per_query_k)
+            results = store.similarity_search(eq, k=per_query_k, namespace=namespace)
             for doc in results:
                 pmid = str((doc.metadata or {}).get("pmid", ""))
                 # keep first occurrence, skip duplicates
@@ -118,20 +122,21 @@ def _retrieve_multi_strategy(
 # ---------------------------------------------------------------------------
 
 
-def answer_question(question: str, k: int = 6) -> dict[str, Any]:
+def answer_question(question: str, user_id: int | None = None, k: int = 6) -> dict[str, Any]:
     """Full CoT pipeline: reason → retrieve → rerank → synthesize."""
 
     # ── Step 1: Input Chain of Thought ──────────────────────────────────
     input_reasoner = InputReasoner()
     reasoned_query = input_reasoner.reason(question)
     log.info(
-        "Input CoT — intent=%s, pubmed_query=%s",
+        "Input CoT [user=%s] — intent=%s, pubmed_query=%s",
+        user_id,
         reasoned_query.intent_type,
         reasoned_query.pubmed_query[:120] if reasoned_query.pubmed_query else "(none)",
     )
 
     # ── Step 2: Multi-strategy retrieval ────────────────────────────────
-    docs = _retrieve_multi_strategy(reasoned_query, k=k)
+    docs = _retrieve_multi_strategy(reasoned_query, user_id=user_id, k=k)
 
     # ── Step 3: Rerank ──────────────────────────────────────────────────
     docs = rerank(docs, question, top_n=k)

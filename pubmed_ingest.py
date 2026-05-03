@@ -346,16 +346,16 @@ def fetch_abstracts(
     return docs
 
 
-def ingest_pubmed_query(query: str, max_results: int = 100, progress_cb=None):
+def ingest_pubmed_query(user_id: int, query: str, max_results: int = 100, progress_cb=None):
     """Full pipeline: search → fetch → chunk → embed → store."""
     if progress_cb: progress_cb("Searching PubMed...")
     pmids = search_pubmed(query, max_results)
     if not pmids:
         return 0
-    return ingest_pmids(pmids, progress_cb=progress_cb)
+    return ingest_pmids(user_id, pmids, progress_cb=progress_cb)
 
 
-def ingest_pmids(pmids: list[str], progress_cb=None):
+def ingest_pmids(user_id: int, pmids: list[str], progress_cb=None):
     """Fetch abstracts for list of PMIDs, chunk, embed, and store in Pinecone."""
     if not pmids:
         return 0
@@ -390,7 +390,14 @@ def ingest_pmids(pmids: list[str], progress_cb=None):
     
     if progress_cb: progress_cb(f"Embedding {len(chunks)} chunks & storing in Pinecone...")
     embeddings = OpenAIEmbeddings(model=settings.embedding_model)
-    PineconeVectorStore.from_documents(chunks, embeddings, index_name=settings.pinecone_index)
+    
+    namespace = f"user_{user_id}"
+    PineconeVectorStore.from_documents(
+        chunks, 
+        embeddings, 
+        index_name=settings.pinecone_index,
+        namespace=namespace
+    )
     
     msg = f"Ingested {len(chunks)} chunks from {len(docs)} PubMed articles"
     print(msg)

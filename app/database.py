@@ -37,24 +37,35 @@ def _conn() -> sqlite3.Connection:
 # ---------------------------------------------------------------------------
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    email           TEXT UNIQUE NOT NULL,
+    hashed_password TEXT NOT NULL,
+    created_at      TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS subscriptions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL,
     query           TEXT NOT NULL,
     max_results     INTEGER DEFAULT 100,
     is_active       INTEGER DEFAULT 1,
     created_at      TEXT DEFAULT (datetime('now')),
     last_run_at     TEXT,
     run_count       INTEGER DEFAULT 0,
-    articles_found  INTEGER DEFAULT 0
+    articles_found  INTEGER DEFAULT 0,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS seen_pmids (
     pmid            TEXT NOT NULL,
     subscription_id INTEGER NOT NULL,
+    user_id         INTEGER NOT NULL,
     title           TEXT,
     ingested_at     TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (pmid, subscription_id),
-    FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+    FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 """
 
@@ -71,17 +82,63 @@ def init_db() -> None:
 
 
 # ---------------------------------------------------------------------------
+# User CRUD
+# ---------------------------------------------------------------------------
+
+
+def create_user(email: str, hashed_password: str) -> dict[str, Any]:
+    """Insert a new user."""
+    conn = _conn()
+    try:
+        cur = conn.execute(
+            "INSERT INTO users (email, hashed_password) VALUES (?, ?)",
+            (email, hashed_password),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM users WHERE id = ?", (cur.lastrowid,)
+        ).fetchone()
+        return dict(row)
+    finally:
+        conn.close()
+
+
+def get_user_by_email(email: str) -> dict[str, Any] | None:
+    """Find a user by email."""
+    conn = _conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM users WHERE email = ?", (email,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_user_by_id(user_id: int) -> dict[str, Any] | None:
+    """Find a user by ID."""
+    conn = _conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
 # Subscription CRUD
 # ---------------------------------------------------------------------------
 
 
-def add_subscription(query: str, max_results: int = 100) -> dict[str, Any]:
+def add_subscription(user_id: int, query: str, max_results: int = 100) -> dict[str, Any]:
     """Insert a new subscription and return it."""
     conn = _conn()
     try:
         cur = conn.execute(
-            "INSERT INTO subscriptions (query, max_results) VALUES (?, ?)",
-            (query, max_results),
+            "INSERT INTO subscriptions (user_id, query, max_results) VALUES (?, ?, ?)",
+            (user_id, query, max_results),
         )
         conn.commit()
         row = conn.execute(
@@ -92,52 +149,66 @@ def add_subscription(query: str, max_results: int = 100) -> dict[str, Any]:
         conn.close()
 
 
-def get_subscriptions() -> list[dict[str, Any]]:
-    """Return all subscriptions."""
+def get_subscriptions(user_id: int) -> list[dict[str, Any]]:
+    """Return all subscriptions for a user."""
     conn = _conn()
     try:
         rows = conn.execute(
-            "SELECT * FROM subscriptions ORDER BY created_at DESC"
+            "SELECT * FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
 
 
-def get_subscription(sub_id: int) -> dict[str, Any] | None:
-    """Return a single subscription by ID."""
+def get_all_active_subscriptions() -> list[dict[str, Any]]:
+    """Return every active subscription across all users."""
+    conn = _conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM subscriptions WHERE is_active = 1"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_subscription(user_id: int, sub_id: int) -> dict[str, Any] | None:
+    """Return a single subscription by ID, scoped to user."""
     conn = _conn()
     try:
         row = conn.execute(
-            "SELECT * FROM subscriptions WHERE id = ?", (sub_id,)
+            "SELECT * FROM subscriptions WHERE id = ? AND user_id = ?",
+            (sub_id, user_id),
         ).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
 
 
-def toggle_subscription(sub_id: int, is_active: bool) -> dict[str, Any] | None:
-    """Toggle active state."""
+def toggle_subscription(user_id: int, sub_id: int, is_active: bool) -> dict[str, Any] | None:
+    """Toggle active state, scoped to user."""
     conn = _conn()
     try:
         conn.execute(
-            "UPDATE subscriptions SET is_active = ? WHERE id = ?",
-            (1 if is_active else 0, sub_id),
+            "UPDATE subscriptions SET is_active = ? WHERE id = ? AND user_id = ?",
+            (1 if is_active else 0, sub_id, user_id),
         )
         conn.commit()
-        row = conn.execute(
-            "SELECT * FROM subscriptions WHERE id = ?", (sub_id,)
-        ).fetchone()
-        return dict(row) if row else None
+        return get_subscription(user_id, sub_id)
     finally:
         conn.close()
 
 
-def delete_subscription(sub_id: int) -> bool:
-    """Delete a subscription and its seen PMIDs (CASCADE)."""
+def delete_subscription(user_id: int, sub_id: int) -> bool:
+    """Delete a subscription, scoped to user."""
     conn = _conn()
     try:
-        cur = conn.execute("DELETE FROM subscriptions WHERE id = ?", (sub_id,))
+        cur = conn.execute(
+            "DELETE FROM subscriptions WHERE id = ? AND user_id = ?",
+            (sub_id, user_id),
+        )
         conn.commit()
         return cur.rowcount > 0
     finally:
@@ -149,40 +220,43 @@ def delete_subscription(sub_id: int) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def get_seen_pmids(subscription_id: int) -> set[str]:
+def get_seen_pmids(user_id: int, subscription_id: int) -> set[str]:
     """Return the set of PMIDs already ingested for this subscription."""
     conn = _conn()
     try:
         rows = conn.execute(
-            "SELECT pmid FROM seen_pmids WHERE subscription_id = ?",
-            (subscription_id,),
+            "SELECT pmid FROM seen_pmids WHERE subscription_id = ? AND user_id = ?",
+            (subscription_id, user_id),
         ).fetchall()
         return {r["pmid"] for r in rows}
     finally:
         conn.close()
 
 
-def get_all_seen_pmids() -> set[str]:
-    """Return every PMID across all subscriptions (global dedup)."""
+def get_all_seen_pmids(user_id: int) -> set[str]:
+    """Return every PMID across all subscriptions for this user."""
     conn = _conn()
     try:
-        rows = conn.execute("SELECT DISTINCT pmid FROM seen_pmids").fetchall()
+        rows = conn.execute(
+            "SELECT DISTINCT pmid FROM seen_pmids WHERE user_id = ?",
+            (user_id,),
+        ).fetchall()
         return {r["pmid"] for r in rows}
     finally:
         conn.close()
 
 
 def mark_pmids_seen(
-    subscription_id: int, pmids: list[tuple[str, str]]
+    user_id: int, subscription_id: int, pmids: list[tuple[str, str]]
 ) -> None:
-    """Record PMIDs as seen. pmids is list of (pmid, title)."""
+    """Record PMIDs as seen."""
     if not pmids:
         return
     conn = _conn()
     try:
         conn.executemany(
-            "INSERT OR IGNORE INTO seen_pmids (pmid, subscription_id, title) VALUES (?, ?, ?)",
-            [(p, subscription_id, t) for p, t in pmids],
+            "INSERT OR IGNORE INTO seen_pmids (pmid, subscription_id, user_id, title) VALUES (?, ?, ?, ?)",
+            [(p, subscription_id, user_id, t) for p, t in pmids],
         )
         conn.commit()
     finally:
@@ -190,9 +264,9 @@ def mark_pmids_seen(
 
 
 def update_subscription_stats(
-    sub_id: int, new_articles: int
+    user_id: int, sub_id: int, new_articles: int
 ) -> None:
-    """Update last_run_at, increment run_count, add to articles_found."""
+    """Update stats, scoped to user."""
     conn = _conn()
     try:
         conn.execute(
@@ -200,21 +274,21 @@ def update_subscription_stats(
                SET last_run_at = datetime('now'),
                    run_count = run_count + 1,
                    articles_found = articles_found + ?
-               WHERE id = ?""",
-            (new_articles, sub_id),
+               WHERE id = ? AND user_id = ?""",
+            (new_articles, sub_id, user_id),
         )
         conn.commit()
     finally:
         conn.close()
 
 
-def get_subscription_pmid_count(sub_id: int) -> int:
-    """Return the number of PMIDs seen for a subscription."""
+def get_subscription_pmid_count(user_id: int, sub_id: int) -> int:
+    """Return the number of PMIDs seen for a subscription, scoped to user."""
     conn = _conn()
     try:
         row = conn.execute(
-            "SELECT COUNT(*) as cnt FROM seen_pmids WHERE subscription_id = ?",
-            (sub_id,),
+            "SELECT COUNT(*) as cnt FROM seen_pmids WHERE subscription_id = ? AND user_id = ?",
+            (sub_id, user_id),
         ).fetchone()
         return row["cnt"] if row else 0
     finally:
