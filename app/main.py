@@ -170,6 +170,8 @@ async def google_login(request: Request):
     base_url = f"{scheme}://{request.url.netloc}"
     google_sso.redirect_uri = f"{base_url}/api/auth/google/callback"
     
+    log.info("Initiating Google login. Redirect URI: %s", google_sso.redirect_uri)
+    
     with google_sso:
         return await google_sso.get_login_redirect()
 
@@ -177,28 +179,35 @@ async def google_login(request: Request):
 @app.get("/api/auth/google/callback")
 async def google_callback(request: Request):
     """Handle the callback from Google."""
-    scheme = "https" if "localhost" not in request.url.hostname else request.url.scheme
-    base_url = f"{scheme}://{request.url.netloc}"
-    google_sso.redirect_uri = f"{base_url}/api/auth/google/callback"
-    
-    with google_sso:
+    try:
+        scheme = "https" if "localhost" not in request.url.hostname else request.url.scheme
+        base_url = f"{scheme}://{request.url.netloc}"
+        google_sso.redirect_uri = f"{base_url}/api/auth/google/callback"
+        
+        log.info("Processing Google callback. Redirect URI: %s", google_sso.redirect_uri)
+        
         user_info = await google_sso.verify_and_process(request)
-    
-    if not user_info:
-        raise HTTPException(status_code=400, detail="Google authentication failed")
-    
-    # Check if user exists, if not create
-    user = get_user_by_email(user_info.email)
-    if not user:
-        # Create a new user (password is irrelevant for SSO)
-        user = create_user(user_info.email, hash_password("sso-placeholder-password"))
-    
-    token = create_access_token({"sub": str(user["id"])})
-    # We redirect back to the app with the token
-    # The frontend will pick up the token from the URL or a separate flow
-    # For now, let's just return it, but a redirect is better for SSO
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(url=f"/?token={token}")
+        
+        if not user_info:
+            log.error("Google authentication failed: no user info returned")
+            raise HTTPException(status_code=400, detail="Google authentication failed")
+        
+        log.info("Google login successful for %s", user_info.email)
+        
+        # Check if user exists, if not create
+        user = get_user_by_email(user_info.email)
+        if not user:
+            log.info("Creating new user for %s", user_info.email)
+            user = create_user(user_info.email, hash_password("sso-placeholder-password"))
+        
+        token = create_access_token({"sub": str(user["id"])})
+        
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=f"/?token={token}")
+        
+    except Exception as e:
+        log.exception("Error in google_callback: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/auth/me")
