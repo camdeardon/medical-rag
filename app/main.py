@@ -6,7 +6,7 @@ from pathlib import Path
 from datetime import datetime
 from threading import Thread
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -134,7 +134,7 @@ _ingest_tasks: dict[str, dict] = {}
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 security = HTTPBearer()
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = FastAPI.Depends(security)):
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     payload = decode_access_token(token)
     if not payload:
@@ -178,7 +178,7 @@ def login(body: UserLogin):
 
 
 @app.get("/api/auth/me")
-def me(user: dict = FastAPI.Depends(get_current_user)):
+def me(user: dict = Depends(get_current_user)):
     return {"id": user["id"], "email": user["email"]}
 
 
@@ -209,7 +209,7 @@ def index_stats():
 
 
 @app.post("/api/query", response_model=QueryResponse)
-def query(body: QueryBody, user: dict = FastAPI.Depends(get_current_user)):
+def query(body: QueryBody, user: dict = Depends(get_current_user)):
     if not settings.openai_api_key:
         raise HTTPException(503, detail="OPENAI_API_KEY not configured")
     if not settings.pinecone_api_key:
@@ -226,20 +226,20 @@ def query(body: QueryBody, user: dict = FastAPI.Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/subscriptions")
-def list_subscriptions(user: dict = FastAPI.Depends(get_current_user)):
+def list_subscriptions(user: dict = Depends(get_current_user)):
     """List all subscriptions."""
     return get_subscriptions(user["id"])
 
 
 @app.post("/api/subscriptions", status_code=201)
-def create_subscription(body: SubscriptionCreate, user: dict = FastAPI.Depends(get_current_user)):
+def create_subscription(body: SubscriptionCreate, user: dict = Depends(get_current_user)):
     """Create a new subscription."""
     sub = add_subscription(user["id"], body.query.strip(), body.max_results)
     return sub
 
 
 @app.patch("/api/subscriptions/{sub_id}")
-def patch_subscription(sub_id: int, body: SubscriptionToggle, user: dict = FastAPI.Depends(get_current_user)):
+def patch_subscription(sub_id: int, body: SubscriptionToggle, user: dict = Depends(get_current_user)):
     """Toggle a subscription's active state."""
     sub = toggle_subscription(user["id"], sub_id, body.is_active)
     if sub is None:
@@ -248,7 +248,7 @@ def patch_subscription(sub_id: int, body: SubscriptionToggle, user: dict = FastA
 
 
 @app.delete("/api/subscriptions/{sub_id}")
-def remove_subscription(sub_id: int, user: dict = FastAPI.Depends(get_current_user)):
+def remove_subscription(sub_id: int, user: dict = Depends(get_current_user)):
     """Delete a subscription."""
     ok = delete_subscription(user["id"], sub_id)
     if not ok:
@@ -257,7 +257,7 @@ def remove_subscription(sub_id: int, user: dict = FastAPI.Depends(get_current_us
 
 
 @app.post("/api/subscriptions/{sub_id}/run")
-def trigger_subscription(sub_id: int, user: dict = FastAPI.Depends(get_current_user)):
+def trigger_subscription(sub_id: int, user: dict = Depends(get_current_user)):
     """Manually trigger a subscription run now (in a background thread)."""
     sub = get_subscription(user["id"], sub_id)
     if sub is None:
@@ -278,7 +278,7 @@ def trigger_subscription(sub_id: int, user: dict = FastAPI.Depends(get_current_u
 
 
 @app.post("/api/subscriptions/run-all")
-def trigger_all_subscriptions(user: dict = FastAPI.Depends(get_current_user)):
+def trigger_all_subscriptions(user: dict = Depends(get_current_user)):
     """Manually trigger all active subscriptions (admin/all-user functionality - potentially restricted)."""
     # For now, let's just run all active ones across all users
     def _bg():
@@ -299,7 +299,7 @@ def trigger_all_subscriptions(user: dict = FastAPI.Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/discover", response_model=DiscoverResponse)
-def discover_articles(body: DiscoverBody, user: dict = FastAPI.Depends(get_current_user)):
+def discover_articles(body: DiscoverBody, user: dict = Depends(get_current_user)):
     """
     Phase 1 & 2: User says what they want -> CoT reasoning -> PubMed discovery.
     """
@@ -337,7 +337,7 @@ def discover_articles(body: DiscoverBody, user: dict = FastAPI.Depends(get_curre
 # ---------------------------------------------------------------------------
 
 @app.post("/api/ingest")
-def trigger_ingest(body: IngestBody, user: dict = FastAPI.Depends(get_current_user)):
+def trigger_ingest(body: IngestBody, user: dict = Depends(get_current_user)):
     """Trigger a manual ingestion run from a query or specific PMIDs."""
     import uuid
     task_id = str(uuid.uuid4())
@@ -385,7 +385,7 @@ def trigger_ingest(body: IngestBody, user: dict = FastAPI.Depends(get_current_us
 
 
 @app.get("/api/ingest/status/{task_id}")
-def get_ingest_status(task_id: str, user: dict = FastAPI.Depends(get_current_user)):
+def get_ingest_status(task_id: str, user: dict = Depends(get_current_user)):
     """Get status of an ingestion task."""
     task = _ingest_tasks.get(task_id)
     if not task or task.get("user_id") != user["id"]:
@@ -394,7 +394,7 @@ def get_ingest_status(task_id: str, user: dict = FastAPI.Depends(get_current_use
 
 
 @app.get("/api/ingest/tasks")
-def list_ingest_tasks(user: dict = FastAPI.Depends(get_current_user)):
+def list_ingest_tasks(user: dict = Depends(get_current_user)):
     """List recent ingestion tasks for the user."""
     return [t for t in _ingest_tasks.values() if t.get("user_id") == user["id"]]
 
