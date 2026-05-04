@@ -28,6 +28,7 @@ from app.database import (
 from app.rag import answer_question
 from app.scheduler import start_scheduler, stop_scheduler, run_subscription, run_all_subscriptions
 from app.auth import hash_password, verify_password, create_access_token, decode_access_token
+from fastapi_sso.sso.google import GoogleSSO
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +51,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Medical RAG", version="0.2.0", lifespan=lifespan)
+
+# Initialize Google SSO
+google_sso = GoogleSSO(
+    client_id=settings.google_client_id,
+    client_secret=settings.google_client_secret,
+    redirect_uri="https://web-production-6cb97.up.railway.app/api/auth/google/callback",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -151,35 +159,55 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 
 
 # ---------------------------------------------------------------------------
-# Auth Endpoints
+# Auth Endpoints (Google SSO)
 # ---------------------------------------------------------------------------
 
-@app.post("/api/auth/signup", response_model=Token)
-def signup(body: UserCreate):
-    existing = get_user_by_email(body.email)
-    if existing:
-        raise HTTPException(400, detail="Email already registered")
-    
-    hashed = hash_password(body.password)
-    user = create_user(body.email, hashed)
-    
-    token = create_access_token({"sub": str(user["id"])})
-    return {"access_token": token, "token_type": "bearer"}
+@app.get("/api/auth/google/login")
+async def google_login():
+    """Redirect to Google login page."""
+    with google_sso:
+        return await google_sso.get_login_redirect()
 
 
-@app.post("/api/auth/login", response_model=Token)
-def login(body: UserLogin):
-    user = get_user_by_email(body.email)
-    if not user or not verify_password(body.password, user["hashed_password"]):
-        raise HTTPException(401, detail="Incorrect email or password")
+@app.get("/api/auth/google/callback", response_model=Token)
+async def google_callback(request: Request):
+    """Handle the callback from Google."""
+    with google_sso:
+        user_info = await google_sso.verify_and_process(request)
+    
+    if not user_info:
+        raise HTTPException(status_code=400, detail="Google authentication failed")
+    
+    # Check if user exists, if not create
+    user = get_user_by_email(user_info.email)
+    if not user:
+        # Create a new user (password is irrelevant for SSO)
+        user = create_user(user_info.email, hash_password("sso-placeholder-password"))
     
     token = create_access_token({"sub": str(user["id"])})
-    return {"access_token": token, "token_type": "bearer"}
+    # We redirect back to the app with the token
+    # The frontend will pick up the token from the URL or a separate flow
+    # For now, let's just return it, but a redirect is better for SSO
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=f"/?token={token}")
 
 
 @app.get("/api/auth/me")
 def me(user: dict = Depends(get_current_user)):
     return {"id": user["id"], "email": user["email"]}
+
+
+# ---------------------------------------------------------------------------
+# Disabled Legacy Auth Endpoints
+# ---------------------------------------------------------------------------
+
+# @app.post("/api/auth/signup", response_model=Token)
+# def signup(body: UserCreate):
+#     ...
+
+# @app.post("/api/auth/login", response_model=Token)
+# def login(body: UserLogin):
+#     ...
 
 
 # ---------------------------------------------------------------------------

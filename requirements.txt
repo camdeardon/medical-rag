@@ -13,3 +13,4 @@ apscheduler>=3.10
 aiosqlite>=0.19
 passlib[bcrypt]>=1.7.4
 PyJWT>=2.8.0
+fastapi-sso>=0.11.0

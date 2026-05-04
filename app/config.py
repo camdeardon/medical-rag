@@ -43,5 +43,10 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("DB_PATH", "db_path")
     )
 
+    # Authentication
+    jwt_secret: str = Field(default="supersecret-medical-rag-key-12345", validation_alias=AliasChoices("JWT_SECRET", "jwt_secret"))
+    google_client_id: str | None = Field(default=None, validation_alias=AliasChoices("GOOGLE_CLIENT_ID", "google_client_id"))
+    google_client_secret: str | None = Field(default=None, validation_alias=AliasChoices("GOOGLE_CLIENT_SECRET", "google_client_secret"))
+
 
 settings = Settings()

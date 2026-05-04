@@ -1,12 +1,12 @@
-import os
 from datetime import datetime, timedelta
 from typing import Any
 
 import jwt
 from passlib.context import CryptContext
+from app.config import settings
 
 # Configuration
-SECRET_KEY = os.environ.get("JWT_SECRET", "supersecret-medical-rag-key-12345")
+SECRET_KEY = settings.jwt_secret
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 1 week
 

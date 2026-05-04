@@ -35,6 +35,16 @@ function hideAuth() {
 }
 
 async function checkAuth() {
+    // Check URL for token (from Google SSO redirect)
+    const urlParams = new URLSearchParams(window.location.search);
+    const tokenFromUrl = urlParams.get("token");
+    if (tokenFromUrl) {
+        _token = tokenFromUrl;
+        localStorage.setItem("medical_rag_token", _token);
+        // Clean up URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
     if (!_token) {
         showAuth();
         return;
@@ -62,50 +72,6 @@ function renderUser() {
     }
 }
 
-async function handleAuth() {
-    const email = $("auth-email").value.trim();
-    const password = $("auth-password").value;
-    const btn = $("auth-submit-btn");
-    const err = $("auth-err");
-
-    if (!email || !password) return;
-
-    btn.disabled = true;
-    btn.textContent = _isSignup ? "Creating Account..." : "Signing In...";
-    err.classList.add("hidden");
-
-    const endpoint = _isSignup ? "/api/auth/signup" : "/api/auth/login";
-    try {
-        const r = await fetch(endpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email, password })
-        });
-        const data = await r.json();
-        if (!r.ok) throw new Error(data.detail || "Authentication failed");
-
-        _token = data.access_token;
-        localStorage.setItem("medical_rag_token", _token);
-        await checkAuth();
-    } catch (e) {
-        err.textContent = e.message;
-        err.classList.remove("hidden");
-    } finally {
-        btn.disabled = false;
-        btn.textContent = _isSignup ? "Sign Up" : "Login";
-    }
-}
-
-$("auth-toggle-btn")?.addEventListener("click", () => {
-    _isSignup = !_isSignup;
-    $("auth-title").textContent = _isSignup ? "Create Account" : "Welcome Back";
-    $("auth-sub").textContent = _isSignup ? "Join the research community." : "Sign in to manage your medical knowledge base.";
-    $("auth-submit-btn").textContent = _isSignup ? "Sign Up" : "Login";
-    $("auth-toggle-text").textContent = _isSignup ? "Already have an account?" : "Don't have an account?";
-    $("auth-toggle-btn").textContent = _isSignup ? "Login" : "Sign Up";
-});
-
-$("auth-submit-btn")?.addEventListener("click", handleAuth);
 $("logout-btn")?.addEventListener("click", () => {
     _token = null;
     _user = null;
