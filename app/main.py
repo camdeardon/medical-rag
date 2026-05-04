@@ -428,8 +428,8 @@ def trigger_ingest(body: IngestBody, user: dict = Depends(get_current_user)):
         except Exception as e:
             log.exception("Ingest task failed for [user=%d]: %s", user["id"], label)
             _ingest_tasks[task_id]["status"] = "failed"
+            _ingest_tasks[task_id]["progress"] = f"Failed: {str(e)}"
             _ingest_tasks[task_id]["error"] = str(e)
-            _ingest_tasks[task_id]["progress"] = "Failed."
 
     Thread(target=_bg_ingest, daemon=True).start()
     return {"task_id": task_id}
