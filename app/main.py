@@ -199,10 +199,8 @@ async def google_callback(request: Request):
         user = get_user_by_email(user_info.email)
         if not user:
             log.info("Creating new user for %s", user_info.email)
-            # Use a very short, simple placeholder password for SSO users
-            placeholder = "sso-user"
-            hashed = hash_password(placeholder)
-            user = create_user(user_info.email, hashed)
+            # Use a simple placeholder for SSO users (we don't need a real hash since they login via Google)
+            user = create_user(user_info.email, "GOOGLE_SSO_USER")
         
         token = create_access_token({"sub": str(user["id"])})
         
