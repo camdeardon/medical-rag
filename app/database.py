@@ -71,10 +71,25 @@ CREATE TABLE IF NOT EXISTS seen_pmids (
 
 
 def init_db() -> None:
-    """Create tables if they don't exist."""
+    """Create tables if they don't exist and handle simple migrations."""
     conn = _conn()
     try:
         conn.executescript(_SCHEMA)
+        
+        # Simple migration: Add user_id to subscriptions and seen_pmids if missing
+        for table in ["subscriptions", "seen_pmids"]:
+            cur = conn.execute(f"PRAGMA table_info({table})")
+            cols = [r["name"] for r in cur.fetchall()]
+            if "user_id" not in cols:
+                log.info("Migrating table %s: adding user_id column", table)
+                # Default to 1 (first user) or NULL? Let's use NULLable for existing rows if we don't have a user yet.
+                # But our schema says NOT NULL. Since we just added accounts, we might want to wipe or set a default.
+                # For safety on existing data, we'll add it as nullable first or with a default of 1.
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE")
+                except sqlite3.OperationalError as e:
+                    log.warning("Migration failed for %s: %s", table, e)
+        
         conn.commit()
         log.info("Database initialized at %s", _get_db_path())
     finally:
