@@ -186,8 +186,11 @@ async def google_callback(request: Request):
         
         log.info("Processing Google callback. Redirect URI: %s", google_sso.redirect_uri)
         
-        user_info = await google_sso.verify_and_process(request)
-        log.info("Google user info received: %s", user_info)
+        try:
+            user_info = await google_sso.verify_and_process(request)
+        except Exception as e:
+            log.exception("FASTAPI-SSO ERROR: %s", e)
+            raise HTTPException(status_code=500, detail=f"SSO Verification Error: {str(e)}")
         
         if not user_info:
             log.error("Google authentication failed: no user info returned")
