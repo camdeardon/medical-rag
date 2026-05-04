@@ -174,7 +174,7 @@ async def google_login(request: Request):
         return await google_sso.get_login_redirect()
 
 
-@app.get("/api/auth/google/callback", response_model=Token)
+@app.get("/api/auth/google/callback")
 async def google_callback(request: Request):
     """Handle the callback from Google."""
     scheme = "https" if "localhost" not in request.url.hostname else request.url.scheme
