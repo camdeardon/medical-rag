@@ -187,6 +187,7 @@ async def google_callback(request: Request):
         log.info("Processing Google callback. Redirect URI: %s", google_sso.redirect_uri)
         
         user_info = await google_sso.verify_and_process(request)
+        log.info("Google user info received: %s", user_info)
         
         if not user_info:
             log.error("Google authentication failed: no user info returned")
@@ -198,7 +199,10 @@ async def google_callback(request: Request):
         user = get_user_by_email(user_info.email)
         if not user:
             log.info("Creating new user for %s", user_info.email)
-            user = create_user(user_info.email, hash_password("sso-placeholder-password"))
+            # Use a very short, simple placeholder password for SSO users
+            placeholder = "sso-user"
+            hashed = hash_password(placeholder)
+            user = create_user(user_info.email, hashed)
         
         token = create_access_token({"sub": str(user["id"])})
         
