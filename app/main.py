@@ -52,11 +52,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Medical RAG", version="0.2.0", lifespan=lifespan)
 
-# Initialize Google SSO
+# Initialize Google SSO (redirect_uri will be set dynamically in endpoints)
 google_sso = GoogleSSO(
     client_id=settings.google_client_id,
     client_secret=settings.google_client_secret,
-    redirect_uri="https://web-production-6cb97.up.railway.app/api/auth/google/callback",
 )
 
 app.add_middleware(
@@ -163,8 +162,12 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 # ---------------------------------------------------------------------------
 
 @app.get("/api/auth/google/login")
-async def google_login():
+async def google_login(request: Request):
     """Redirect to Google login page."""
+    # Construct redirect URI dynamically based on the request host
+    base_url = str(request.base_url).rstrip("/")
+    google_sso.redirect_uri = f"{base_url}/api/auth/google/callback"
+    
     with google_sso:
         return await google_sso.get_login_redirect()
 
@@ -172,6 +175,9 @@ async def google_login():
 @app.get("/api/auth/google/callback", response_model=Token)
 async def google_callback(request: Request):
     """Handle the callback from Google."""
+    base_url = str(request.base_url).rstrip("/")
+    google_sso.redirect_uri = f"{base_url}/api/auth/google/callback"
+    
     with google_sso:
         user_info = await google_sso.verify_and_process(request)
     
