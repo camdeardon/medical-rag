@@ -165,7 +165,9 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 async def google_login(request: Request):
     """Redirect to Google login page."""
     # Construct redirect URI dynamically based on the request host
-    base_url = str(request.base_url).rstrip("/")
+    # Force HTTPS for production (Railway) to avoid redirect_uri_mismatch
+    scheme = "https" if "localhost" not in request.url.hostname else request.url.scheme
+    base_url = f"{scheme}://{request.url.netloc}"
     google_sso.redirect_uri = f"{base_url}/api/auth/google/callback"
     
     with google_sso:
@@ -175,7 +177,8 @@ async def google_login(request: Request):
 @app.get("/api/auth/google/callback", response_model=Token)
 async def google_callback(request: Request):
     """Handle the callback from Google."""
-    base_url = str(request.base_url).rstrip("/")
+    scheme = "https" if "localhost" not in request.url.hostname else request.url.scheme
+    base_url = f"{scheme}://{request.url.netloc}"
     google_sso.redirect_uri = f"{base_url}/api/auth/google/callback"
     
     with google_sso:
