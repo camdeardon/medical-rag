@@ -42,6 +42,15 @@ STATIC_DIR = PROJECT_ROOT / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown."""
+    # Ensure NLP data is available (critical for Railway/Cloud)
+    try:
+        import nltk
+        nltk.download('stopwords', quiet=True)
+        nltk.download('punkt', quiet=True)
+        nltk.download('punkt_tab', quiet=True)
+    except Exception as e:
+        log.error(f"Failed to download NLTK data: {e}")
+
     init_db()
     start_scheduler()
     log.info("Medical RAG started — scheduler active")
