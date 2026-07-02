@@ -53,6 +53,10 @@ async function checkAuth() {
         const r = await apiFetch("/api/auth/me");
         if (r.ok) {
             _user = await r.json();
+            if (!_user.is_approved) {
+                showPendingApproval();
+                return;
+            }
             renderUser();
             hideAuth();
         } else {
@@ -63,12 +67,26 @@ async function checkAuth() {
     }
 }
 
+function showPendingApproval() {
+    $("auth-overlay").classList.add("active");
+    $("auth-title").textContent = "Approval Required";
+    $("auth-sub").textContent = "Your account is pending admin approval. Please check back later or contact an admin.";
+    $("auth-form").innerHTML = "";
+    $("auth-err").classList.add("hidden");
+}
+
 function renderUser() {
     if (_user) {
         $("user-email").textContent = _user.email;
         $("user-profile").classList.remove("hidden");
+        if (_user.is_admin) {
+            $("tab-admin").classList.remove("hidden");
+        } else {
+            $("tab-admin").classList.add("hidden");
+        }
     } else {
         $("user-profile").classList.add("hidden");
+        $("tab-admin").classList.add("hidden");
     }
 }
 
@@ -123,13 +141,18 @@ function switchTab(target) {
   });
 
   if (target === "knowledge") {
-    const activeSub = document.querySelector(".sub-tab-btn.active")?.dataset.subtab;
+    const activeSub = document.querySelector("#panel-knowledge .sub-tab-btn.active")?.dataset.subtab;
     if (activeSub === "subscribe") {
       loadIngestTasks();
       loadSubscriptions();
     } else if (activeSub === "discover") {
       renderRecentSearches();
     }
+  } else if (target === "admin") {
+    const activeSub = document.querySelector("#panel-admin .sub-tab-btn.active")?.dataset.subtab;
+    if (activeSub === "stats") loadAdminStats();
+    else if (activeSub === "users") loadAdminUsers();
+    else if (activeSub === "evaluations") loadAdminEvals();
   }
 }
 
@@ -154,6 +177,12 @@ subTabBtns.forEach((btn) => {
       loadSubscriptions();
     } else if (target === "discover") {
       renderRecentSearches();
+    } else if (target === "stats") {
+      loadAdminStats();
+    } else if (target === "users") {
+      loadAdminUsers();
+    } else if (target === "evaluations") {
+      loadAdminEvals();
     }
   });
 });
@@ -494,6 +523,239 @@ async function runSub(id) {
 window.toggleSub = toggleSub;
 window.deleteSub = deleteSub;
 window.runSub = runSub;
+
+// ── Admin Logic ──────────────────────────────────────────────────────────────
+async function loadAdminUsers() {
+  try {
+    const r = await apiFetch("/api/admin/users");
+    if (!r.ok) return;
+    const users = await r.json();
+    $("admin-users-list").innerHTML = users.map(u => `
+      <div style="background: #f9fafb; padding: 12px; border-radius: 8px; border: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <strong>${escapeHtml(u.email)}</strong> 
+          <span style="font-size: 0.8rem; color: #6b7280; margin-left: 8px;">Joined ${new Date(u.created_at).toLocaleDateString()}</span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="action-btn" style="padding: 4px 8px; font-size: 0.8rem;" onclick="showUserDetails(${u.id})">Details</button>
+          <label style="display: flex; align-items: center; gap: 4px; font-size: 0.85rem;">
+            <input type="checkbox" ${u.is_approved ? 'checked' : ''} onchange="updateUser(${u.id}, this.checked, ${u.is_admin})"> Approved
+          </label>
+          <label style="display: flex; align-items: center; gap: 4px; font-size: 0.85rem;">
+            <input type="checkbox" ${u.is_admin ? 'checked' : ''} onchange="updateUser(${u.id}, ${u.is_approved}, this.checked)"> Admin
+          </label>
+        </div>
+      </div>
+    `).join("");
+    
+    // Populate user filter dropdown
+    const filter = $("admin-user-filter");
+    if (filter && filter.options.length <= 1) {
+       users.forEach(u => {
+          const opt = document.createElement("option");
+          opt.value = u.id;
+          opt.textContent = u.email;
+          filter.appendChild(opt);
+       });
+    }
+  } catch (e) { console.error(e); }
+}
+
+async function showUserDetails(id) {
+  try {
+    const r = await apiFetch(`/api/admin/users/${id}/details`);
+    if (!r.ok) return;
+    const data = await r.json();
+    
+    $("ud-title").textContent = `Details for ${data.user.email}`;
+    $("ud-saved").textContent = data.saved_articles_count.toLocaleString();
+    
+    if (data.subscriptions.length === 0) {
+      $("ud-subs").innerHTML = "<li>No subscriptions</li>";
+    } else {
+      $("ud-subs").innerHTML = data.subscriptions.map(s => 
+        `<li><strong>${escapeHtml(s.query)}</strong> (Max: ${s.max_results}, Runs: ${s.run_count}, Found: ${s.articles_found}) - ${s.is_active ? 'Active' : 'Paused'}</li>`
+      ).join("");
+    }
+    
+    if (data.evaluations.length === 0) {
+      $("ud-evals").innerHTML = "<li>No queries logged</li>";
+    } else {
+      $("ud-evals").innerHTML = data.evaluations.map(e => 
+        `<li style="margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e5e7eb;">
+           <strong>Q:</strong> ${escapeHtml(e.question)}<br>
+           <span style="font-size: 0.85rem; color: #6b7280;">A: ${escapeHtml(e.answer).substring(0, 100)}...</span>
+         </li>`
+      ).join("");
+    }
+    
+    $("user-detail-modal").classList.remove("hidden");
+  } catch (e) { console.error(e); }
+}
+
+async function updateUser(id, is_approved, is_admin) {
+  try {
+    await apiFetch(`/api/admin/users/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ is_approved, is_admin }),
+    });
+    loadAdminUsers();
+  } catch (e) { console.error(e); }
+}
+
+async function loadAdminEvals() {
+  try {
+    const r = await apiFetch("/api/admin/evaluations");
+    if (!r.ok) return;
+    const evals = await r.json();
+    $("admin-evals-list").innerHTML = evals.map(e => `
+      <div class="result-block" style="margin-bottom: 20px; padding: 16px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;">
+        <div style="font-size: 0.8rem; color: #6b7280; margin-bottom: 8px;">User: ${escapeHtml(e.user_email)} · ${new Date(e.created_at).toLocaleString()}</div>
+        <p class="block-label">Question</p>
+        <p style="margin-bottom: 12px; font-weight: 500;">${escapeHtml(e.question)}</p>
+        <p class="block-label">Answer</p>
+        <p style="margin-bottom: 12px; font-size: 0.95rem; line-height: 1.5;">${escapeHtml(e.answer)}</p>
+        <details class="cot-details" style="margin-top: 10px;">
+          <summary class="cot-summary" style="padding: 6px 12px;">
+             <span class="cot-title">Reasoning Trace</span>
+          </summary>
+          <div class="cot-content" style="padding: 12px;">
+             <pre style="white-space: pre-wrap; font-size: 0.8rem;">${escapeHtml(JSON.stringify(e.reasoning_trace, null, 2))}</pre>
+          </div>
+        </details>
+      </div>
+    `).join("");
+  } catch (e) { console.error(e); }
+}
+
+let _charts = {};
+
+async function loadAdminStats() {
+  try {
+    const userId = $("admin-user-filter")?.value || "";
+    const url = userId ? `/api/admin/advanced-analytics?user_id=${userId}` : `/api/admin/advanced-analytics`;
+    
+    // Fetch system stats for top cards if system-wide
+    if (!userId) {
+        const sr = await apiFetch("/api/admin/system-stats");
+        if (sr.ok) {
+            const stats = await sr.json();
+            $("admin-stats-content").innerHTML = `
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+                 <div style="background: #f9fafb; padding: 20px; border-radius: 8px; border: 1px solid #e5e7eb; text-align: center;">
+                    <div style="font-size: 0.9rem; color: #6b7280; font-weight: 500;">Total Users</div>
+                    <div style="font-size: 2rem; color: #111827; font-weight: 700;">${stats.total_users}</div>
+                 </div>
+                 <div style="background: #f9fafb; padding: 20px; border-radius: 8px; border: 1px solid #e5e7eb; text-align: center;">
+                    <div style="font-size: 0.9rem; color: #6b7280; font-weight: 500;">Queries Logged</div>
+                    <div style="font-size: 2rem; color: #4F46E5; font-weight: 700;">${stats.total_queries}</div>
+                 </div>
+                 <div style="background: #f9fafb; padding: 20px; border-radius: 8px; border: 1px solid #e5e7eb; text-align: center;">
+                    <div style="font-size: 0.9rem; color: #6b7280; font-weight: 500;">Active Subscriptions</div>
+                    <div style="font-size: 2rem; color: #10B981; font-weight: 700;">${stats.active_subscriptions}</div>
+                 </div>
+              </div>
+            `;
+            $("admin-stats-summary").style.display = "block";
+        }
+    } else {
+        $("admin-stats-summary").style.display = "none";
+    }
+
+    const r = await apiFetch(url);
+    if (!r.ok) return;
+    const data = await r.json();
+    
+    const destroyChart = (id) => { if (_charts[id]) _charts[id].destroy(); };
+    
+    // Brand Palette
+    const brandIndigo = '#4F46E5';
+    const brandEmerald = '#10B981';
+    const indigoScale = ['#312E81', '#3730A3', '#4338CA', '#4F46E5', '#6366F1', '#818CF8', '#A5B4FC', '#C7D2FE'];
+    
+    // 1. Data Yield (Vertical Bar) - Top wide chart
+    destroyChart('chart-yield');
+    const ctxYield = document.getElementById('chart-yield').getContext('2d');
+    _charts['chart-yield'] = new Chart(ctxYield, {
+        type: 'bar',
+        data: {
+            labels: data.data_yield.map(y => y.query.substring(0, 40) + (y.query.length > 40 ? "..." : "")),
+            datasets: [{ label: 'Articles Found', data: data.data_yield.map(y => y.articles), backgroundColor: brandEmerald, borderRadius: 4 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+    });
+
+    // 2. Areas of Interest (Doughnut)
+    destroyChart('chart-areas');
+    const ctxAreas = document.getElementById('chart-areas').getContext('2d');
+    _charts['chart-areas'] = new Chart(ctxAreas, {
+        type: 'doughnut',
+        data: {
+            labels: data.areas_of_interest.map(a => a.topic),
+            datasets: [{ data: data.areas_of_interest.map(a => a.mentions), backgroundColor: indigoScale, borderWidth: 0 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
+    });
+
+    // 3. Recurring Queries (Horizontal Bar)
+    destroyChart('chart-queries');
+    const ctxQueries = document.getElementById('chart-queries').getContext('2d');
+    _charts['chart-queries'] = new Chart(ctxQueries, {
+        type: 'bar',
+        data: {
+            labels: data.recurring_queries.map(q => q.query.substring(0, 30) + (q.query.length > 30 ? "..." : "")),
+            datasets: [{ label: 'Times Asked', data: data.recurring_queries.map(q => q.count), backgroundColor: brandIndigo, borderRadius: 4 }]
+        },
+        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+    });
+
+    // 4. User Leaderboard (Only if no user filter)
+    if (!userId && data.user_leaderboard) {
+        $("leaderboard-panel").style.display = "block";
+        destroyChart('chart-users');
+        const ctxUsers = document.getElementById('chart-users').getContext('2d');
+        _charts['chart-users'] = new Chart(ctxUsers, {
+            type: 'bar',
+            data: {
+                labels: data.user_leaderboard.map(u => u.email),
+                datasets: [{ label: 'Activity Score', data: data.user_leaderboard.map(u => u.activity_score), backgroundColor: brandEmerald, borderRadius: 4 }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+        });
+    } else {
+        $("leaderboard-panel").style.display = "none";
+    }
+
+  } catch (e) { console.error(e); }
+}
+
+$("admin-create-user-btn")?.addEventListener("click", async () => {
+  const email = $("admin-create-user-email").value.trim();
+  if (!email) return;
+  const btn = $("admin-create-user-btn");
+  btn.disabled = true;
+  btn.textContent = "Creating...";
+  try {
+    const r = await apiFetch("/api/admin/users", {
+      method: "POST",
+      body: JSON.stringify({ email, password: "temp" }),
+    });
+    if (!r.ok) {
+      const data = await r.json();
+      alert(data.detail || "Error creating user");
+    } else {
+      $("admin-create-user-email").value = "";
+      loadAdminUsers();
+    }
+  } catch (e) {
+    console.error(e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Create & Approve User";
+  }
+});
+
+window.updateUser = updateUser;
 
 function showError(id, msg) {
   const el = $(id);

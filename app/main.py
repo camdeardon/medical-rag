@@ -141,7 +141,7 @@ _ingest_tasks: dict[str, dict] = {}
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 security = HTTPBearer()
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def get_current_user_unapproved(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     payload = decode_access_token(token)
     if not payload:
@@ -157,6 +157,18 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     return user
 
 
+async def get_current_user(user: dict = Depends(get_current_user_unapproved)):
+    if not user.get("is_approved"):
+        raise HTTPException(403, detail="Your account is pending admin approval.")
+    return user
+
+
+def get_current_admin(user: dict = Depends(get_current_user)):
+    if not user.get("is_admin"):
+        raise HTTPException(403, detail="Admin access required.")
+    return user
+
+
 # ---------------------------------------------------------------------------
 # Auth Endpoints (Google SSO)
 # ---------------------------------------------------------------------------
@@ -165,8 +177,8 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 async def google_login(request: Request):
     """Redirect to Google login page."""
     # Construct redirect URI dynamically based on the request host
-    # Force HTTPS for production (Railway) to avoid redirect_uri_mismatch
-    scheme = "https" if "localhost" not in request.url.hostname else request.url.scheme
+    # Force HTTPS for production to avoid redirect_uri_mismatch
+    scheme = "http" if request.url.hostname in ("localhost", "127.0.0.1", "0.0.0.0") else "https"
     base_url = f"{scheme}://{request.url.netloc}"
     google_sso.redirect_uri = f"{base_url}/api/auth/google/callback"
     
@@ -180,7 +192,7 @@ async def google_login(request: Request):
 async def google_callback(request: Request):
     """Handle the callback from Google."""
     try:
-        scheme = "https" if "localhost" not in request.url.hostname else request.url.scheme
+        scheme = "http" if request.url.hostname in ("localhost", "127.0.0.1", "0.0.0.0") else "https"
         base_url = f"{scheme}://{request.url.netloc}"
         google_sso.redirect_uri = f"{base_url}/api/auth/google/callback"
         
@@ -216,8 +228,13 @@ async def google_callback(request: Request):
 
 
 @app.get("/api/auth/me")
-def me(user: dict = Depends(get_current_user)):
-    return {"id": user["id"], "email": user["email"]}
+def me(user: dict = Depends(get_current_user_unapproved)):
+    return {
+        "id": user["id"], 
+        "email": user["email"], 
+        "is_approved": bool(user.get("is_approved")),
+        "is_admin": bool(user.get("is_admin"))
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +257,64 @@ def me(user: dict = Depends(get_current_user)):
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+class UserUpdate(BaseModel):
+    is_approved: bool
+    is_admin: bool
+
+
+@app.get("/api/admin/users")
+def get_users_endpoint(admin: dict = Depends(get_current_admin)):
+    from app.database import get_all_users
+    return get_all_users()
+
+
+@app.patch("/api/admin/users/{user_id}")
+def update_user_endpoint(user_id: int, body: UserUpdate, admin: dict = Depends(get_current_admin)):
+    from app.database import update_user_status
+    ok = update_user_status(user_id, body.is_approved, body.is_admin)
+    if not ok:
+        raise HTTPException(404, detail="User not found")
+    return {"status": "ok"}
+
+
+@app.get("/api/admin/evaluations")
+def get_evaluations_endpoint(admin: dict = Depends(get_current_admin)):
+    from app.database import get_evaluation_logs
+    return get_evaluation_logs()
+
+
+@app.post("/api/admin/users")
+def create_user_endpoint(body: UserCreate, admin: dict = Depends(get_current_admin)):
+    from app.database import create_user, update_user_status, get_user_by_email
+    existing = get_user_by_email(body.email)
+    if existing:
+        raise HTTPException(400, detail="User already exists")
+    user = create_user(body.email, "ADMIN_CREATED_USER")
+    update_user_status(user["id"], True, False)
+    return {"status": "ok", "id": user["id"]}
+
+
+@app.get("/api/admin/users/{user_id}/details")
+def get_user_details_endpoint(user_id: int, admin: dict = Depends(get_current_admin)):
+    from app.database import get_user_details_admin
+    details = get_user_details_admin(user_id)
+    if not details:
+        raise HTTPException(404, "User not found")
+    return details
+
+
+@app.get("/api/admin/system-stats")
+def get_system_stats_endpoint(admin: dict = Depends(get_current_admin)):
+    from app.database import get_system_stats
+    return get_system_stats()
+
+
+@app.get("/api/admin/advanced-analytics")
+def get_advanced_analytics_endpoint(user_id: int | None = None, admin: dict = Depends(get_current_admin)):
+    from app.database import get_advanced_analytics
+    return get_advanced_analytics(user_id)
 
 
 @app.get("/api/stats")
@@ -267,6 +342,18 @@ def query(body: QueryBody, user: dict = Depends(get_current_user)):
         raise HTTPException(503, detail="PINECONE_API_KEY not configured")
     try:
         result = answer_question(body.question.strip(), user_id=user["id"], k=body.k)
+        
+        # Log evaluation
+        from app.database import add_evaluation_log
+        add_evaluation_log(
+            user_id=user["id"],
+            question=body.question.strip(),
+            answer=result.get("answer", ""),
+            sources=result.get("sources", []),
+            query_analysis=result.get("query_analysis"),
+            reasoning_trace=result.get("reasoning_trace")
+        )
+        
         return QueryResponse(**result)
     except Exception as e:
         raise HTTPException(500, detail=str(e)) from e
