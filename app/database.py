@@ -133,9 +133,13 @@ def create_user(email: str, hashed_password: str) -> dict[str, Any]:
     """Insert a new user."""
     conn = _conn()
     try:
+        # Hardcode the super-admin
+        is_admin = 1 if email.lower() == "camadamdeardon@gmail.com" else 0
+        is_approved = 1 if is_admin else 0
+        
         cur = conn.execute(
-            "INSERT INTO users (email, hashed_password) VALUES (?, ?)",
-            (email, hashed_password),
+            "INSERT INTO users (email, hashed_password, is_admin, is_approved) VALUES (?, ?, ?, ?)",
+            (email, hashed_password, is_admin, is_approved),
         )
         conn.commit()
         row = conn.execute(
