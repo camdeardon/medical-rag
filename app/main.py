@@ -110,6 +110,10 @@ class QueryResponse(BaseModel):
 class SubscriptionCreate(BaseModel):
     query: str = Field(..., min_length=2, max_length=4000)
     max_results: int = Field(100, ge=10, le=1000)
+    article_type: str | None = None
+    journals: str | None = None
+    sort_by: str = "relevance"
+    min_citations: int = 0
 
 
 class SubscriptionToggle(BaseModel):
@@ -392,7 +396,17 @@ def list_subscriptions(user: dict = Depends(get_current_user)):
 @app.post("/api/subscriptions", status_code=201)
 def create_subscription(body: SubscriptionCreate, user: dict = Depends(get_current_user)):
     """Create a new subscription."""
-    sub = add_subscription(user["id"], body.query.strip(), body.max_results)
+    sub = add_subscription(
+        user["id"], 
+        body.query.strip(), 
+        body.max_results,
+        article_type=body.article_type,
+        journals=body.journals,
+        sort_by=body.sort_by,
+        min_citations=body.min_citations
+    )
+    # Run it immediately in background
+    Thread(target=run_subscription, args=(sub,)).start()
     return sub
 
 

@@ -220,7 +220,8 @@ def search_pubmed(query: str, max_results: int = 50) -> list[str]:
 
     resp = requests.get(f"{BASE_URL}/esearch.fcgi", params=params)
     resp.raise_for_status()
-    ids = resp.json()["esearchresult"]["idlist"]
+    data = resp.json()
+    ids = data.get("esearchresult", {}).get("idlist", [])
     print(f"Found {len(ids)} articles for: '{query}'")
     return ids
 

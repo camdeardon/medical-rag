@@ -27,7 +27,6 @@ async function apiFetch(url, options = {}) {
 
 function showAuth() {
     $("auth-overlay").classList.add("active");
-    $("auth-email").focus();
 }
 
 function hideAuth() {
@@ -434,11 +433,21 @@ async function loadSubscriptions() {
     }
     
     if (emptyState) emptyState.classList.add("hidden");
-    container.innerHTML = subs.reverse().map(s => `
+    container.innerHTML = subs.reverse().map(s => {
+      const typeStr = s.article_type ? `<span style="font-size:0.8rem; background:#f1f5f9; padding:2px 6px; border-radius:4px; margin-left:8px; color:var(--text-light); border:1px solid #e2e8f0;">${escapeHtml(s.article_type)}</span>` : '';
+      const journalsStr = s.journals ? `<div style="font-size:0.8rem; color:var(--text-light); margin-top:4px;">Journals: ${escapeHtml(s.journals)}</div>` : '';
+      const citationsStr = s.min_citations > 0 ? `<div style="font-size:0.8rem; color:var(--text-light); margin-top:4px;">Min Citations: ${s.min_citations}+</div>` : '';
+      
+      return `
       <div class="sub-card ${s.is_active ? 'sub-active' : ''}">
         <div class="sub-card-header">
           <div class="sub-card-left">
-            <span class="sub-query" title="${escapeHtml(s.query)}">${escapeHtml(s.query)}</span>
+            <span class="sub-query" title="${escapeHtml(s.query)}">
+              <strong>${escapeHtml(s.query)}</strong>
+              ${typeStr}
+              ${journalsStr}
+              ${citationsStr}
+            </span>
             <span class="sub-status ${s.is_active ? "sub-status-active" : "sub-status-paused"}">${s.is_active ? "Active" : "Paused"}</span>
           </div>
           <div class="sub-card-actions">
@@ -463,13 +472,19 @@ async function loadSubscriptions() {
           <div class="sub-stat"><span class="sub-stat-label">Added</span><span class="sub-stat-value">${new Date(s.created_at).toLocaleDateString()}</span></div>
         </div>
       </div>
-    `).join("");
+    `;}).join("");
   } catch (e) { console.error(e); }
 }
 
 async function addSubscription() {
   const q = $("sub-query-input").value.trim();
   const max = parseInt($("sub-max-results").value, 10) || 100;
+  
+  const articleType = $("sub-type") ? $("sub-type").value : "All";
+  const journals = $("sub-journals") ? $("sub-journals").value.trim() : "";
+  const sortBy = $("sub-sort") ? $("sub-sort").value : "relevance";
+  const minCitations = $("sub-min-citations") ? parseInt($("sub-min-citations").value, 10) || 0 : 0;
+
   if (q.length < 2) return;
 
   const btn = $("sub-add-btn");
@@ -477,16 +492,32 @@ async function addSubscription() {
   btn.textContent = "Subscribing...";
 
   try {
+    const payload = {
+      query: q,
+      max_results: max,
+      article_type: articleType === "All" ? null : articleType,
+      journals: journals ? journals : null,
+      sort_by: sortBy,
+      min_citations: minCitations
+    };
+    
     const r = await apiFetch("/api/subscriptions", {
       method: "POST",
-      body: JSON.stringify({ query: q, max_results: max }),
+      body: JSON.stringify(payload),
     });
+    
     if (r.ok) {
       $("sub-query-input").value = "";
+      if ($("sub-journals")) $("sub-journals").value = "";
       loadSubscriptions();
+    } else {
+      const err = await r.json();
+      alert("Error: " + (err.detail || "Failed to add subscription"));
     }
-  } catch (e) { console.error(e); }
-  finally {
+  } catch (e) { 
+      console.error(e); 
+      alert("Network error");
+  } finally {
     btn.disabled = false;
     btn.textContent = "Subscribe";
   }

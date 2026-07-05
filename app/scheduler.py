@@ -35,15 +35,38 @@ _stop_flag = False
 # ---------------------------------------------------------------------------
 
 
-def _search_pubmed(query: str, max_results: int = 100) -> list[str]:
+def _search_pubmed(
+    query: str, 
+    max_results: int = 100,
+    article_type: str | None = None,
+    journals: str | None = None,
+    sort_by: str = "relevance"
+) -> list[str]:
     """Search PubMed and return list of PMIDs."""
+    
+    # Build advanced query
+    entrez_query = f"({query})"
+    if article_type and article_type.lower() != "all":
+        entrez_query += f' AND ("{article_type}"[Publication Type])'
+    if journals:
+        # Split by comma, strip whitespace, wrap in [Journal]
+        j_list = [j.strip() for j in journals.split(",") if j.strip()]
+        if j_list:
+            j_term = " OR ".join([f'"{j}"[Journal]' for j in j_list])
+            entrez_query += f" AND ({j_term})"
+            
+    # PubMed sort parameter mapping
+    sort_val = "relevance"
+    if sort_by == "date":
+        sort_val = "pub+date"
+
     params = {
         "db": "pubmed",
-        "term": query,
+        "term": entrez_query,
         "retmax": max_results,
         "retmode": "json",
         "email": EMAIL,
-        "sort": "relevance",
+        "sort": sort_val,
     }
     ncbi_key = getattr(settings, "ncbi_api_key", None)
     if ncbi_key and ncbi_key != "...":
@@ -88,6 +111,41 @@ def _fetch_article_titles(pmids: list[str]) -> dict[str, str]:
 
     return titles
 
+def _fetch_citation_counts(pmids: list[str]) -> dict[str, int]:
+    """Fetch pmcrefcount (citations) for a batch of PMIDs."""
+    if not pmids:
+        return {}
+
+    counts: dict[str, int] = {}
+    for i in range(0, len(pmids), 50):
+        batch = pmids[i : i + 50]
+        params = {
+            "db": "pubmed",
+            "id": ",".join(batch),
+            "retmode": "json",
+            "email": EMAIL,
+        }
+        ncbi_key = getattr(settings, "ncbi_api_key", None)
+        if ncbi_key and ncbi_key != "...":
+            params["api_key"] = ncbi_key
+
+        try:
+            resp = requests.get(f"{BASE_URL}/esummary.fcgi", params=params, timeout=15)
+            resp.raise_for_status()
+            data = resp.json().get("result", {})
+            for pmid in batch:
+                if pmid in data:
+                    counts[pmid] = data[pmid].get("pmcrefcount", 0) or 0
+        except Exception:
+            log.exception("Failed to fetch citation counts for batch")
+            for pmid in batch:
+                counts[pmid] = 0
+
+        import time
+        time.sleep(0.15)
+
+    return counts
+
 
 # ---------------------------------------------------------------------------
 # Subscription runner
@@ -107,7 +165,13 @@ def run_subscription(sub: dict) -> int:
 
     # 1) Search PubMed
     try:
-        all_pmids = _search_pubmed(query, max_results)
+        all_pmids = _search_pubmed(
+            query, 
+            max_results,
+            article_type=sub.get("article_type"),
+            journals=sub.get("journals"),
+            sort_by=sub.get("sort_by", "relevance")
+        )
     except Exception:
         log.exception("PubMed search failed for subscription #%d", sub_id)
         return 0
@@ -130,6 +194,20 @@ def run_subscription(sub: dict) -> int:
         "Subscription #%d: %d new articles (of %d total)",
         sub_id, len(new_pmids), len(all_pmids),
     )
+    
+    # 2.5) Filter by min_citations
+    min_citations = sub.get("min_citations", 0)
+    if min_citations > 0:
+        counts = _fetch_citation_counts(new_pmids)
+        filtered_pmids = [p for p in new_pmids if counts.get(p, 0) >= min_citations]
+        log.info("Subscription #%d: filtered from %d down to %d articles based on >=%d citations", 
+                 sub_id, len(new_pmids), len(filtered_pmids), min_citations)
+        new_pmids = filtered_pmids
+        
+    if not new_pmids:
+        log.info("Subscription #%d: no articles passed citation filter", sub_id)
+        update_subscription_stats(sub["user_id"], sub_id, 0)
+        return 0
 
     # 3) Fetch titles for recording
     try:

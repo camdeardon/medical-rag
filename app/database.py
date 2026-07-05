@@ -56,6 +56,10 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     last_run_at     TEXT,
     run_count       INTEGER DEFAULT 0,
     articles_found  INTEGER DEFAULT 0,
+    article_type    TEXT,
+    journals        TEXT,
+    sort_by         TEXT DEFAULT 'relevance',
+    min_citations   INTEGER DEFAULT 0,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -113,7 +117,24 @@ def init_db() -> None:
                 try:
                     conn.execute(f"ALTER TABLE users ADD COLUMN {col} INTEGER DEFAULT 0")
                 except sqlite3.OperationalError as e:
-                    log.warning("Migration failed for users.%s: %s", col, e)
+                    log.warning("Migration failed for users: %s", e)
+        
+        # Migrations for subscriptions table: advanced settings
+        for col in ["article_type", "journals", "sort_by", "min_citations"]:
+            cur = conn.execute("PRAGMA table_info(subscriptions)")
+            cols = [r["name"] for r in cur.fetchall()]
+            if col not in cols:
+                log.info("Migrating table subscriptions: adding %s column", col)
+                if col == "sort_by":
+                    default = "'relevance'"
+                elif col == "min_citations":
+                    default = "0"
+                else:
+                    default = "NULL"
+                try:
+                    conn.execute(f"ALTER TABLE subscriptions ADD COLUMN {col} TEXT DEFAULT {default}")
+                except sqlite3.OperationalError as e:
+                    log.warning("Migration failed for subscriptions: %s", e)
         
         # Make the first user an admin and approved automatically to bootstrap
         conn.execute("UPDATE users SET is_approved = 1, is_admin = 1 WHERE id = 1")
@@ -383,13 +404,23 @@ def get_evaluation_logs(limit: int = 100, offset: int = 0) -> list[dict[str, Any
 # ---------------------------------------------------------------------------
 
 
-def add_subscription(user_id: int, query: str, max_results: int = 100) -> dict[str, Any]:
+def add_subscription(
+    user_id: int, 
+    query: str, 
+    max_results: int = 100,
+    article_type: str | None = None,
+    journals: str | None = None,
+    sort_by: str = "relevance",
+    min_citations: int = 0
+) -> dict[str, Any]:
     """Insert a new subscription and return it."""
     conn = _conn()
     try:
         cur = conn.execute(
-            "INSERT INTO subscriptions (user_id, query, max_results) VALUES (?, ?, ?)",
-            (user_id, query, max_results),
+            """INSERT INTO subscriptions 
+               (user_id, query, max_results, article_type, journals, sort_by, min_citations) 
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, query, max_results, article_type, journals, sort_by, min_citations),
         )
         conn.commit()
         row = conn.execute(

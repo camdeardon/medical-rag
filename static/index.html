@@ -237,6 +237,40 @@
               </label>
               <button type="button" id="sub-add-btn" class="action-btn">Subscribe</button>
             </div>
+            
+            <details style="margin-top: 16px; border-top: 1px solid var(--border); padding-top: 16px;">
+              <summary style="cursor: pointer; color: var(--primary); font-weight: 500; font-size: 0.9rem;">
+                 ⚙️ Advanced Filters
+              </summary>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; font-size: 0.9rem;">
+                 <label style="display:flex; flex-direction:column; gap:4px;">
+                    <span style="color:var(--text-light); font-weight:500;">Article Type</span>
+                    <select id="sub-type" class="sub-query-input" style="padding:8px; border:1px solid var(--border); border-radius:6px; background:#fff;">
+                       <option value="All">All Types</option>
+                       <option value="Review">Review</option>
+                       <option value="Clinical Trial">Clinical Trial</option>
+                       <option value="Meta-Analysis">Meta-Analysis</option>
+                       <option value="Randomized Controlled Trial">Randomized Controlled Trial</option>
+                       <option value="Guideline">Guideline</option>
+                    </select>
+                 </label>
+                 <label style="display:flex; flex-direction:column; gap:4px;">
+                    <span style="color:var(--text-light); font-weight:500;">Sort By</span>
+                    <select id="sub-sort" class="sub-query-input" style="padding:8px; border:1px solid var(--border); border-radius:6px; background:#fff;">
+                       <option value="relevance">Relevance</option>
+                       <option value="date">Publication Date</option>
+                    </select>
+                 </label>
+                 <label style="display:flex; flex-direction:column; gap:4px; grid-column: span 2;">
+                    <span style="color:var(--text-light); font-weight:500;">Min Citations</span>
+                    <input type="number" id="sub-min-citations" class="sub-query-input" min="0" value="0" style="padding:8px; border:1px solid var(--border); border-radius:6px; width: 100%; box-sizing: border-box;" />
+                 </label>
+                 <label style="display:flex; flex-direction:column; gap:4px; grid-column: span 2;">
+                    <span style="color:var(--text-light); font-weight:500;">Journals (comma separated)</span>
+                    <input type="text" id="sub-journals" class="sub-query-input" placeholder="e.g. Lancet, New England Journal of Medicine" style="padding:8px; border:1px solid var(--border); border-radius:6px; width: 100%; box-sizing: border-box;" />
+                 </label>
+              </div>
+            </details>
           </div>
 
           <div id="sub-list" class="sub-list">
